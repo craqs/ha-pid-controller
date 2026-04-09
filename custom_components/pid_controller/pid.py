@@ -146,16 +146,15 @@ class PIDController:
                 effective_floor = self.floor_value * (1.0 - overshoot_ratio)
 
             if raw_output < effective_floor:
-                # Anti-windup: when floor overrides the PID, don't let
-                # integral accumulate further against the floor direction.
+                # Anti-windup: when floor overrides the PID and temp is
+                # above target, don't let integral go more negative.
                 # Without this, integral builds up a huge negative value
                 # while floor keeps the valve open above target, causing
                 # very slow recovery when heating is actually needed.
-                if error < 0 and self._integral < 0:
-                    self._integral = max(self._integral, prev_integral)
-                    self.last_i = self._integral
-                elif error > 0 and self._integral > 0:
-                    self._integral = min(self._integral, prev_integral)
+                # When below target, integral should keep accumulating
+                # positive so raw PID eventually exceeds the floor.
+                if error < 0 and self._integral < prev_integral:
+                    self._integral = prev_integral
                     self.last_i = self._integral
                 self.last_floor_active = True
                 return int(effective_floor)

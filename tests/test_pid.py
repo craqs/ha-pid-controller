@@ -293,8 +293,7 @@ class TestFloorAntiWindup:
         """Even during floor override, integral should be able to move toward zero."""
         pid = make_pid(kp=15.0, ki=0.005, kd=0, floor_value=25, off_threshold=1.0)
 
-        # Build up negative integral first with a tick where floor is not blocking
-        # by using high kp temporarily
+        # Build up negative integral first
         pid._integral = -5.0
 
         # Now with positive error (below target), integral should move positive
@@ -304,6 +303,30 @@ class TestFloorAntiWindup:
 
         # Integral should have moved toward zero (become less negative)
         assert pid._integral > -5.0
+
+    def test_integral_accumulates_positive_during_floor_below_target(self):
+        """When below target and floor is active, integral must keep growing
+        so raw PID eventually exceeds the floor — the living room scenario."""
+        pid = make_pid(kp=20.0, ki=0.005, kd=0, floor_value=20, off_threshold=1.0, boost_threshold=0)
+
+        # cur=23.3, tgt=24.0 -> error=0.7, P=14, floor=20, floor active
+        tick(pid, 23.3, 24.0, time_offset=0.0)
+        tick(pid, 23.3, 24.0)
+        i_first = pid._integral
+        assert i_first > 0  # integral should be positive
+
+        # After more ticks, integral should keep growing
+        for _ in range(10):
+            tick(pid, 23.3, 24.0)
+        i_later = pid._integral
+        assert i_later > i_first  # integral must keep accumulating
+
+        # Eventually raw output (P + I) should exceed floor
+        # P=14, need I >= 6 to exceed floor of 20
+        for _ in range(200):
+            tick(pid, 23.3, 24.0)
+        assert pid._integral > 6.0  # should have accumulated enough
+        assert pid.last_floor_active is False  # PID now exceeds floor
 
 
 # --- Reset ---
