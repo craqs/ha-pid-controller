@@ -112,9 +112,17 @@ class PIDController:
         raw_output = self.last_p + self.last_i + self.last_d
         raw_output = max(0.0, min(100.0, raw_output))
 
-        # Floor logic: keep valve at minimum opening until off_threshold is reached
-        if raw_output < self.floor_value and current_temp < target_temp + self.off_threshold:
-            self.last_floor_active = True
-            return self.floor_value
+        # Floor logic: keep valve at minimum opening, decaying linearly
+        # above target until off_threshold is reached
+        if current_temp < target_temp + self.off_threshold:
+            if current_temp <= target_temp:
+                effective_floor = self.floor_value
+            else:
+                overshoot_ratio = (current_temp - target_temp) / self.off_threshold
+                effective_floor = self.floor_value * (1.0 - overshoot_ratio)
+
+            if raw_output < effective_floor:
+                self.last_floor_active = True
+                return int(effective_floor)
 
         return int(raw_output)
