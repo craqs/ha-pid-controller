@@ -36,6 +36,7 @@ from .const import (
     CONF_UPDATE_INTERVAL,
     CONF_FLOOR_VALUE,
     CONF_INTEGRAL_MAX,
+    CONF_SYNC_TARGET_TEMP,
     DEFAULT_KD,
     DEFAULT_KI,
     DEFAULT_KP,
@@ -46,6 +47,7 @@ from .const import (
     DEFAULT_UPDATE_INTERVAL,
     DEFAULT_FLOOR_VALUE,
     DEFAULT_INTEGRAL_MAX,
+    DEFAULT_SYNC_TARGET_TEMP,
     DOMAIN,
 )
 from .pid import PIDController
@@ -253,6 +255,7 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             return
         self._attr_target_temperature = temp
         self.async_write_ha_state()
+        await self._async_sync_target_temp(temp)
         await self._async_recalculate_and_send()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
@@ -274,6 +277,34 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
     async def async_turn_off(self) -> None:
         """Turn off heating."""
         await self.async_set_hvac_mode(HVACMode.OFF)
+
+    async def _async_sync_target_temp(self, temp: float) -> None:
+        """Sync target temperature to the real thermostat if enabled."""
+        if not self._entry.options.get(
+            CONF_SYNC_TARGET_TEMP, DEFAULT_SYNC_TARGET_TEMP
+        ):
+            return
+
+        entity_id = self._real_thermostat_entity
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in ("unavailable", "unknown"):
+            _LOGGER.warning(
+                "Real thermostat %s is not available, skipping target temp sync",
+                entity_id,
+            )
+            return
+
+        try:
+            await self.hass.services.async_call(
+                "climate",
+                "set_temperature",
+                {"entity_id": entity_id, ATTR_TEMPERATURE: temp},
+                blocking=True,
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Failed to sync target temperature to %s", entity_id
+            )
 
     async def _async_recalculate_and_send(self) -> None:
         """Run PID calculation and send valve position."""
@@ -350,5 +381,8 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             ),
             "pid_sample_interval_sec": self._entry.options.get(
                 CONF_PID_SAMPLE_INTERVAL, DEFAULT_PID_SAMPLE_INTERVAL
+            ),
+            "sync_target_temperature": self._entry.options.get(
+                CONF_SYNC_TARGET_TEMP, DEFAULT_SYNC_TARGET_TEMP
             ),
         }

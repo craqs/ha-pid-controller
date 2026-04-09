@@ -34,13 +34,15 @@
           "pid_sample_interval": "PID calculation interval (seconds)",
           "min_temp": "Minimum temperature (°C)",
           "max_temp": "Maximum temperature (°C)",
-          "integral_max": "Integral anti-windup limit"
+          "integral_max": "Integral anti-windup limit",
+          "sync_target_temperature": "Sync target temperature to real thermostat"
         },
         "data_description": {
           "floor_value": "Minimum valve opening percentage when heating is needed. Prevents the valve from closing completely.",
           "off_threshold": "Degrees above target temperature before the valve fully closes to 0%.",
           "update_interval": "How often to re-send the valve position to prevent the built-in PID from taking over.",
-          "pid_sample_interval": "How often the PID algorithm recalculates the valve position."
+          "pid_sample_interval": "How often the PID algorithm recalculates the valve position.",
+          "sync_target_temperature": "When enabled, the target temperature is also sent to the real thermostat. Keeps its display correct and makes the built-in PID a safer fallback."
         }
       }
     }

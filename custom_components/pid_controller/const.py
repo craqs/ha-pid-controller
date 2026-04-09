@@ -30,3 +30,5 @@ CONF_PID_SAMPLE_INTERVAL = "pid_sample_interval"
 CONF_INTEGRAL_MAX = "integral_max"
 CONF_MIN_TEMP = "min_temp"
 CONF_MAX_TEMP = "max_temp"
+CONF_SYNC_TARGET_TEMP = "sync_target_temperature"
+DEFAULT_SYNC_TARGET_TEMP = True

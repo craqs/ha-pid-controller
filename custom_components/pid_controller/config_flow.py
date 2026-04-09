@@ -12,6 +12,7 @@ from homeassistant.const import CONF_NAME
 from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     EntitySelector,
     EntitySelectorConfig,
     NumberSelector,
@@ -42,7 +43,9 @@ from .const import (
     DEFAULT_MIN_TEMP,
     DEFAULT_OFF_THRESHOLD,
     DEFAULT_PID_SAMPLE_INTERVAL,
+    DEFAULT_SYNC_TARGET_TEMP,
     DEFAULT_UPDATE_INTERVAL,
+    CONF_SYNC_TARGET_TEMP,
     DOMAIN,
 )
 
@@ -232,6 +235,12 @@ class PIDControllerOptionsFlow(OptionsFlow):
                         min=10, max=500, step=10, mode=NumberSelectorMode.BOX
                     )
                 ),
+                vol.Optional(
+                    CONF_SYNC_TARGET_TEMP,
+                    default=options.get(
+                        CONF_SYNC_TARGET_TEMP, DEFAULT_SYNC_TARGET_TEMP
+                    ),
+                ): BooleanSelector(),
             }
         )
 
