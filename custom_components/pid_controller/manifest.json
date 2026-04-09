@@ -1,0 +1,10 @@
+{
+  "domain": "pid_controller",
+  "name": "PID Controller for Radiator Thermostats",
+  "codeowners": ["@craqs"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/craqs/ha-pid-controller",
+  "iot_class": "local_push",
+  "version": "1.0.0"
+}
