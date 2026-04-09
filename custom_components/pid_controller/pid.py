@@ -88,6 +88,9 @@ class PIDController:
 
         if not is_heating or target_temp is None:
             self.reset()
+            self.last_p = 0.0
+            self.last_i = 0.0
+            self.last_d = 0.0
             return 0
 
         # If significantly above target, close valve completely
