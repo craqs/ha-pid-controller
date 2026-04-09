@@ -1,0 +1,653 @@
+title: PID Controller Dashboard
+views:
+  - title: Overview
+    path: overview
+    icon: mdi:thermostat
+    cards:
+      - type: markdown
+        content: |
+          # PID Controller Overview
+          **How it works**: Custom PID computes valve % from error (target - current). Floor value keeps valve slightly open for comfort. Boost opens valve fully on large setpoint changes.
+
+      - type: horizontal-stack
+        cards:
+          - type: gauge
+            entity: climate.lr_thermostat_window_custom_pid
+            attribute: valve_position
+            name: LR Window
+            unit: "%"
+            min: 0
+            max: 100
+            severity:
+              green: 0
+              yellow: 50
+              red: 80
+            needle: true
+          - type: gauge
+            entity: climate.lr_thermostat_balcony_custom_pid
+            attribute: valve_position
+            name: LR Balcony
+            unit: "%"
+            min: 0
+            max: 100
+            severity:
+              green: 0
+              yellow: 50
+              red: 80
+            needle: true
+          - type: gauge
+            entity: climate.br_thermostat_custom_pid
+            attribute: valve_position
+            name: Bedroom
+            unit: "%"
+            min: 0
+            max: 100
+            severity:
+              green: 0
+              yellow: 50
+              red: 80
+            needle: true
+          - type: gauge
+            entity: climate.jb_thermostat_custom_pid
+            attribute: valve_position
+            name: Jacob's Room
+            unit: "%"
+            min: 0
+            max: 100
+            severity:
+              green: 0
+              yellow: 50
+              red: 80
+            needle: true
+
+      - type: entities
+        title: All Thermostats Status
+        entities:
+          - type: section
+            label: Living Room - Window
+          - entity: climate.lr_thermostat_window_custom_pid
+            name: Virtual Thermostat
+          - entity: number.lr_thermostat_window_pi_heating_demand
+            name: Valve (PI Heating Demand)
+          - type: section
+            label: Living Room - Balcony
+          - entity: climate.lr_thermostat_balcony_custom_pid
+            name: Virtual Thermostat
+          - entity: number.lr_thermostat_balcony_pi_heating_demand
+            name: Valve (PI Heating Demand)
+          - type: section
+            label: Bedroom
+          - entity: climate.br_thermostat_custom_pid
+            name: Virtual Thermostat
+          - entity: number.br_thermostat_pi_heating_demand
+            name: Valve (PI Heating Demand)
+          - type: section
+            label: Jacob's Room
+          - entity: climate.jb_thermostat_custom_pid
+            name: Virtual Thermostat
+          - entity: number.jb_thermostat_pi_heating_demand
+            name: Valve (PI Heating Demand)
+
+  - title: PID Breakdown
+    path: pid-breakdown
+    icon: mdi:chart-box
+    cards:
+      # --- Living Room - Window ---
+      - type: markdown
+        title: Living Room - Window
+        content: |
+          {% set e = 'climate.lr_thermostat_window_custom_pid' %}
+          {% set pid = state_attr(e, 'pid_p') %}
+          {% set pii = state_attr(e, 'pid_i') %}
+          {% set pid_d = state_attr(e, 'pid_d') %}
+          {% set kp = state_attr(e, 'kp') %}
+          {% set current = state_attr(e, 'current_temperature') %}
+          {% set target = state_attr(e, 'temperature') %}
+          {% set valve = state_attr(e, 'valve_position') %}
+          {% set floor = state_attr(e, 'floor_value') %}
+          {% set floor_active = state_attr(e, 'floor_active') %}
+          {% set boost_active = state_attr(e, 'boost_active') %}
+          {% set off_threshold = state_attr(e, 'off_threshold') %}
+          {% set hvac_mode = states(e) %}
+          {% set error = (target - current) | round(2) if current and target else 'N/A' %}
+          {% set raw = (pid + pii + pid_d) | round(2) if pid is not none else 'N/A' %}
+          {% if hvac_mode == 'off' %}
+          | | Value |
+          |:--|--:|
+          | **Current temp** | {{ current }}°C |
+          | **Target temp** | {{ target }}°C |
+          | **Valve position** | **0%** |
+          > **HVAC OFF** — Thermostat turned off (e.g., window open). Valve closed, PID inactive.
+          {% else %}
+          | | Value |
+          |:--|--:|
+          | **Current temp** | {{ current }}°C |
+          | **Target temp** | {{ target }}°C |
+          | **Error** (target - current) | {{ error }}°C |
+          | | |
+          | **P** = Kp × error = {{ kp }} × {{ error }} | **{{ pid }}** |
+          | **I** = accumulated | **{{ pii }}** |
+          | **D** = Kd × rate | **{{ pid_d }}** |
+          | **Raw PID output** (P + I + D) | **{{ raw }}%** |
+          | | |
+          | **Valve position** | **{{ valve }}%** |
+          | **Floor active** | {{ '🟢 Yes' if floor_active else '⚪ No' }} |
+          | **Boost active** | {{ '🔴 Yes' if boost_active else '⚪ No' }} |
+          {% if boost_active %}
+          > **BOOST**: Error ≥ {{ state_attr(e, 'boost_threshold') }}°C → valve forced to {{ state_attr(e, 'boost_value') }}%
+          {% elif floor_active %}
+          {% if current and target and current > target %}
+          {% set overshoot = ((current - target) / off_threshold) | round(2) %}
+          > **FLOOR DECAY**: {{ current }}°C is {{ (current - target) | round(2) }}°C above target. Effective floor = {{ floor }}% × (1 - {{ overshoot }}) = **{{ (floor * (1 - overshoot)) | round(0) | int }}%**
+          {% else %}
+          > **FLOOR**: Raw output {{ raw }}% < floor {{ floor }}% → valve held at {{ floor }}%
+          {% endif %}
+          {% elif current and target and current >= target + off_threshold %}
+          > **OFF**: {{ current }}°C ≥ {{ target }}°C + {{ off_threshold }}°C → valve closed, integral reset
+          {% else %}
+          > PID output used directly: **{{ valve }}%**
+          {% endif %}
+          {% endif %}
+
+      # --- Living Room - Balcony ---
+      - type: markdown
+        title: Living Room - Balcony
+        content: |
+          {% set e = 'climate.lr_thermostat_balcony_custom_pid' %}
+          {% set pid = state_attr(e, 'pid_p') %}
+          {% set pii = state_attr(e, 'pid_i') %}
+          {% set pid_d = state_attr(e, 'pid_d') %}
+          {% set kp = state_attr(e, 'kp') %}
+          {% set current = state_attr(e, 'current_temperature') %}
+          {% set target = state_attr(e, 'temperature') %}
+          {% set valve = state_attr(e, 'valve_position') %}
+          {% set floor = state_attr(e, 'floor_value') %}
+          {% set floor_active = state_attr(e, 'floor_active') %}
+          {% set boost_active = state_attr(e, 'boost_active') %}
+          {% set off_threshold = state_attr(e, 'off_threshold') %}
+          {% set hvac_mode = states(e) %}
+          {% set error = (target - current) | round(2) if current and target else 'N/A' %}
+          {% set raw = (pid + pii + pid_d) | round(2) if pid is not none else 'N/A' %}
+          {% if hvac_mode == 'off' %}
+          | | Value |
+          |:--|--:|
+          | **Current temp** | {{ current }}°C |
+          | **Target temp** | {{ target }}°C |
+          | **Valve position** | **0%** |
+          > **HVAC OFF** — Thermostat turned off (e.g., window open). Valve closed, PID inactive.
+          {% else %}
+          | | Value |
+          |:--|--:|
+          | **Current temp** | {{ current }}°C |
+          | **Target temp** | {{ target }}°C |
+          | **Error** (target - current) | {{ error }}°C |
+          | | |
+          | **P** = Kp × error = {{ kp }} × {{ error }} | **{{ pid }}** |
+          | **I** = accumulated | **{{ pii }}** |
+          | **D** = Kd × rate | **{{ pid_d }}** |
+          | **Raw PID output** (P + I + D) | **{{ raw }}%** |
+          | | |
+          | **Valve position** | **{{ valve }}%** |
+          | **Floor active** | {{ '🟢 Yes' if floor_active else '⚪ No' }} |
+          | **Boost active** | {{ '🔴 Yes' if boost_active else '⚪ No' }} |
+          {% if boost_active %}
+          > **BOOST**: Error ≥ {{ state_attr(e, 'boost_threshold') }}°C → valve forced to {{ state_attr(e, 'boost_value') }}%
+          {% elif floor_active %}
+          {% if current and target and current > target %}
+          {% set overshoot = ((current - target) / off_threshold) | round(2) %}
+          > **FLOOR DECAY**: {{ current }}°C is {{ (current - target) | round(2) }}°C above target. Effective floor = {{ floor }}% × (1 - {{ overshoot }}) = **{{ (floor * (1 - overshoot)) | round(0) | int }}%**
+          {% else %}
+          > **FLOOR**: Raw output {{ raw }}% < floor {{ floor }}% → valve held at {{ floor }}%
+          {% endif %}
+          {% elif current and target and current >= target + off_threshold %}
+          > **OFF**: {{ current }}°C ≥ {{ target }}°C + {{ off_threshold }}°C → valve closed, integral reset
+          {% else %}
+          > PID output used directly: **{{ valve }}%**
+          {% endif %}
+          {% endif %}
+
+      # --- Bedroom ---
+      - type: markdown
+        title: Bedroom
+        content: |
+          {% set e = 'climate.br_thermostat_custom_pid' %}
+          {% set pid = state_attr(e, 'pid_p') %}
+          {% set pii = state_attr(e, 'pid_i') %}
+          {% set pid_d = state_attr(e, 'pid_d') %}
+          {% set kp = state_attr(e, 'kp') %}
+          {% set current = state_attr(e, 'current_temperature') %}
+          {% set target = state_attr(e, 'temperature') %}
+          {% set valve = state_attr(e, 'valve_position') %}
+          {% set floor = state_attr(e, 'floor_value') %}
+          {% set floor_active = state_attr(e, 'floor_active') %}
+          {% set boost_active = state_attr(e, 'boost_active') %}
+          {% set off_threshold = state_attr(e, 'off_threshold') %}
+          {% set hvac_mode = states(e) %}
+          {% set error = (target - current) | round(2) if current and target else 'N/A' %}
+          {% set raw = (pid + pii + pid_d) | round(2) if pid is not none else 'N/A' %}
+          {% if hvac_mode == 'off' %}
+          | | Value |
+          |:--|--:|
+          | **Current temp** | {{ current }}°C |
+          | **Target temp** | {{ target }}°C |
+          | **Valve position** | **0%** |
+          > **HVAC OFF** — Thermostat turned off (e.g., window open). Valve closed, PID inactive.
+          {% else %}
+          | | Value |
+          |:--|--:|
+          | **Current temp** | {{ current }}°C |
+          | **Target temp** | {{ target }}°C |
+          | **Error** (target - current) | {{ error }}°C |
+          | | |
+          | **P** = Kp × error = {{ kp }} × {{ error }} | **{{ pid }}** |
+          | **I** = accumulated | **{{ pii }}** |
+          | **D** = Kd × rate | **{{ pid_d }}** |
+          | **Raw PID output** (P + I + D) | **{{ raw }}%** |
+          | | |
+          | **Valve position** | **{{ valve }}%** |
+          | **Floor active** | {{ '🟢 Yes' if floor_active else '⚪ No' }} |
+          | **Boost active** | {{ '🔴 Yes' if boost_active else '⚪ No' }} |
+          {% if boost_active %}
+          > **BOOST**: Error ≥ {{ state_attr(e, 'boost_threshold') }}°C → valve forced to {{ state_attr(e, 'boost_value') }}%
+          {% elif floor_active %}
+          {% if current and target and current > target %}
+          {% set overshoot = ((current - target) / off_threshold) | round(2) %}
+          > **FLOOR DECAY**: {{ current }}°C is {{ (current - target) | round(2) }}°C above target. Effective floor = {{ floor }}% × (1 - {{ overshoot }}) = **{{ (floor * (1 - overshoot)) | round(0) | int }}%**
+          {% else %}
+          > **FLOOR**: Raw output {{ raw }}% < floor {{ floor }}% → valve held at {{ floor }}%
+          {% endif %}
+          {% elif current and target and current >= target + off_threshold %}
+          > **OFF**: {{ current }}°C ≥ {{ target }}°C + {{ off_threshold }}°C → valve closed, integral reset
+          {% else %}
+          > PID output used directly: **{{ valve }}%**
+          {% endif %}
+          {% endif %}
+
+      # --- Jacob's Room ---
+      - type: markdown
+        title: Jacob's Room
+        content: |
+          {% set e = 'climate.jb_thermostat_custom_pid' %}
+          {% set pid = state_attr(e, 'pid_p') %}
+          {% set pii = state_attr(e, 'pid_i') %}
+          {% set pid_d = state_attr(e, 'pid_d') %}
+          {% set kp = state_attr(e, 'kp') %}
+          {% set current = state_attr(e, 'current_temperature') %}
+          {% set target = state_attr(e, 'temperature') %}
+          {% set valve = state_attr(e, 'valve_position') %}
+          {% set floor = state_attr(e, 'floor_value') %}
+          {% set floor_active = state_attr(e, 'floor_active') %}
+          {% set boost_active = state_attr(e, 'boost_active') %}
+          {% set off_threshold = state_attr(e, 'off_threshold') %}
+          {% set hvac_mode = states(e) %}
+          {% set error = (target - current) | round(2) if current and target else 'N/A' %}
+          {% set raw = (pid + pii + pid_d) | round(2) if pid is not none else 'N/A' %}
+          {% if hvac_mode == 'off' %}
+          | | Value |
+          |:--|--:|
+          | **Current temp** | {{ current }}°C |
+          | **Target temp** | {{ target }}°C |
+          | **Valve position** | **0%** |
+          > **HVAC OFF** — Thermostat turned off (e.g., window open). Valve closed, PID inactive.
+          {% else %}
+          | | Value |
+          |:--|--:|
+          | **Current temp** | {{ current }}°C |
+          | **Target temp** | {{ target }}°C |
+          | **Error** (target - current) | {{ error }}°C |
+          | | |
+          | **P** = Kp × error = {{ kp }} × {{ error }} | **{{ pid }}** |
+          | **I** = accumulated | **{{ pii }}** |
+          | **D** = Kd × rate | **{{ pid_d }}** |
+          | **Raw PID output** (P + I + D) | **{{ raw }}%** |
+          | | |
+          | **Valve position** | **{{ valve }}%** |
+          | **Floor active** | {{ '🟢 Yes' if floor_active else '⚪ No' }} |
+          | **Boost active** | {{ '🔴 Yes' if boost_active else '⚪ No' }} |
+          {% if boost_active %}
+          > **BOOST**: Error ≥ {{ state_attr(e, 'boost_threshold') }}°C → valve forced to {{ state_attr(e, 'boost_value') }}%
+          {% elif floor_active %}
+          {% if current and target and current > target %}
+          {% set overshoot = ((current - target) / off_threshold) | round(2) %}
+          > **FLOOR DECAY**: {{ current }}°C is {{ (current - target) | round(2) }}°C above target. Effective floor = {{ floor }}% × (1 - {{ overshoot }}) = **{{ (floor * (1 - overshoot)) | round(0) | int }}%**
+          {% else %}
+          > **FLOOR**: Raw output {{ raw }}% < floor {{ floor }}% → valve held at {{ floor }}%
+          {% endif %}
+          {% elif current and target and current >= target + off_threshold %}
+          > **OFF**: {{ current }}°C ≥ {{ target }}°C + {{ off_threshold }}°C → valve closed, integral reset
+          {% else %}
+          > PID output used directly: **{{ valve }}%**
+          {% endif %}
+          {% endif %}
+
+  - title: Living Room - Window
+    path: lr-window
+    icon: mdi:radiator
+    cards:
+      - type: markdown
+        content: |
+          ## Living Room - Window
+
+      - type: thermostat
+        entity: climate.lr_thermostat_window_custom_pid
+
+      - type: history-graph
+        title: Temperature & Valve History
+        hours_to_show: 24
+        entities:
+          - entity: climate.lr_thermostat_window_custom_pid
+            name: Temperature
+          - entity: number.lr_thermostat_window_pi_heating_demand
+            name: Valve %
+
+      - type: entities
+        title: Settings
+        entities:
+          - type: attribute
+            entity: climate.lr_thermostat_window_custom_pid
+            attribute: kp
+            name: Kp (Proportional gain)
+            icon: mdi:alpha-p-circle
+          - type: attribute
+            entity: climate.lr_thermostat_window_custom_pid
+            attribute: ki
+            name: Ki (Integral gain)
+            icon: mdi:alpha-i-circle
+          - type: attribute
+            entity: climate.lr_thermostat_window_custom_pid
+            attribute: kd
+            name: Kd (Derivative gain)
+            icon: mdi:alpha-d-circle
+          - type: attribute
+            entity: climate.lr_thermostat_window_custom_pid
+            attribute: floor_value
+            name: Floor value (%)
+            icon: mdi:arrow-collapse-down
+          - type: attribute
+            entity: climate.lr_thermostat_window_custom_pid
+            attribute: off_threshold
+            name: Off threshold (°C)
+            icon: mdi:thermometer-off
+          - type: attribute
+            entity: climate.lr_thermostat_window_custom_pid
+            attribute: boost_threshold
+            name: Boost threshold (°C)
+            icon: mdi:rocket-launch
+          - type: attribute
+            entity: climate.lr_thermostat_window_custom_pid
+            attribute: boost_value
+            name: Boost value (%)
+            icon: mdi:rocket-launch
+          - type: attribute
+            entity: climate.lr_thermostat_window_custom_pid
+            attribute: integral_max
+            name: Integral anti-windup limit
+            icon: mdi:arrow-collapse-vertical
+          - type: attribute
+            entity: climate.lr_thermostat_window_custom_pid
+            attribute: update_interval_min
+            name: Valve refresh (min)
+            icon: mdi:timer-refresh
+          - type: attribute
+            entity: climate.lr_thermostat_window_custom_pid
+            attribute: pid_sample_interval_sec
+            name: PID interval (sec)
+            icon: mdi:timer-cog
+          - type: attribute
+            entity: climate.lr_thermostat_window_custom_pid
+            attribute: sync_target_temperature
+            name: Sync target to real thermostat
+            icon: mdi:sync
+
+  - title: Living Room - Balcony
+    path: lr-balcony
+    icon: mdi:radiator
+    cards:
+      - type: markdown
+        content: |
+          ## Living Room - Balcony
+
+      - type: thermostat
+        entity: climate.lr_thermostat_balcony_custom_pid
+
+      - type: history-graph
+        title: Temperature & Valve History
+        hours_to_show: 24
+        entities:
+          - entity: climate.lr_thermostat_balcony_custom_pid
+            name: Temperature
+          - entity: number.lr_thermostat_balcony_pi_heating_demand
+            name: Valve %
+
+      - type: entities
+        title: Settings
+        entities:
+          - type: attribute
+            entity: climate.lr_thermostat_balcony_custom_pid
+            attribute: kp
+            name: Kp (Proportional gain)
+            icon: mdi:alpha-p-circle
+          - type: attribute
+            entity: climate.lr_thermostat_balcony_custom_pid
+            attribute: ki
+            name: Ki (Integral gain)
+            icon: mdi:alpha-i-circle
+          - type: attribute
+            entity: climate.lr_thermostat_balcony_custom_pid
+            attribute: kd
+            name: Kd (Derivative gain)
+            icon: mdi:alpha-d-circle
+          - type: attribute
+            entity: climate.lr_thermostat_balcony_custom_pid
+            attribute: floor_value
+            name: Floor value (%)
+            icon: mdi:arrow-collapse-down
+          - type: attribute
+            entity: climate.lr_thermostat_balcony_custom_pid
+            attribute: off_threshold
+            name: Off threshold (°C)
+            icon: mdi:thermometer-off
+          - type: attribute
+            entity: climate.lr_thermostat_balcony_custom_pid
+            attribute: boost_threshold
+            name: Boost threshold (°C)
+            icon: mdi:rocket-launch
+          - type: attribute
+            entity: climate.lr_thermostat_balcony_custom_pid
+            attribute: boost_value
+            name: Boost value (%)
+            icon: mdi:rocket-launch
+          - type: attribute
+            entity: climate.lr_thermostat_balcony_custom_pid
+            attribute: integral_max
+            name: Integral anti-windup limit
+            icon: mdi:arrow-collapse-vertical
+          - type: attribute
+            entity: climate.lr_thermostat_balcony_custom_pid
+            attribute: update_interval_min
+            name: Valve refresh (min)
+            icon: mdi:timer-refresh
+          - type: attribute
+            entity: climate.lr_thermostat_balcony_custom_pid
+            attribute: pid_sample_interval_sec
+            name: PID interval (sec)
+            icon: mdi:timer-cog
+          - type: attribute
+            entity: climate.lr_thermostat_balcony_custom_pid
+            attribute: sync_target_temperature
+            name: Sync target to real thermostat
+            icon: mdi:sync
+
+  - title: Bedroom
+    path: bedroom
+    icon: mdi:bed
+    cards:
+      - type: markdown
+        content: |
+          ## Bedroom
+
+      - type: thermostat
+        entity: climate.br_thermostat_custom_pid
+
+      - type: history-graph
+        title: Temperature & Valve History
+        hours_to_show: 24
+        entities:
+          - entity: climate.br_thermostat_custom_pid
+            name: Temperature
+          - entity: number.br_thermostat_pi_heating_demand
+            name: Valve %
+
+      - type: entities
+        title: Settings
+        entities:
+          - type: attribute
+            entity: climate.br_thermostat_custom_pid
+            attribute: kp
+            name: Kp (Proportional gain)
+            icon: mdi:alpha-p-circle
+          - type: attribute
+            entity: climate.br_thermostat_custom_pid
+            attribute: ki
+            name: Ki (Integral gain)
+            icon: mdi:alpha-i-circle
+          - type: attribute
+            entity: climate.br_thermostat_custom_pid
+            attribute: kd
+            name: Kd (Derivative gain)
+            icon: mdi:alpha-d-circle
+          - type: attribute
+            entity: climate.br_thermostat_custom_pid
+            attribute: floor_value
+            name: Floor value (%)
+            icon: mdi:arrow-collapse-down
+          - type: attribute
+            entity: climate.br_thermostat_custom_pid
+            attribute: off_threshold
+            name: Off threshold (°C)
+            icon: mdi:thermometer-off
+          - type: attribute
+            entity: climate.br_thermostat_custom_pid
+            attribute: boost_threshold
+            name: Boost threshold (°C)
+            icon: mdi:rocket-launch
+          - type: attribute
+            entity: climate.br_thermostat_custom_pid
+            attribute: boost_value
+            name: Boost value (%)
+            icon: mdi:rocket-launch
+          - type: attribute
+            entity: climate.br_thermostat_custom_pid
+            attribute: integral_max
+            name: Integral anti-windup limit
+            icon: mdi:arrow-collapse-vertical
+          - type: attribute
+            entity: climate.br_thermostat_custom_pid
+            attribute: update_interval_min
+            name: Valve refresh (min)
+            icon: mdi:timer-refresh
+          - type: attribute
+            entity: climate.br_thermostat_custom_pid
+            attribute: pid_sample_interval_sec
+            name: PID interval (sec)
+            icon: mdi:timer-cog
+          - type: attribute
+            entity: climate.br_thermostat_custom_pid
+            attribute: sync_target_temperature
+            name: Sync target to real thermostat
+            icon: mdi:sync
+
+  - title: Jacob's Room
+    path: jacobs-room
+    icon: mdi:human-child
+    cards:
+      - type: markdown
+        content: |
+          ## Jacob's Room
+
+      - type: thermostat
+        entity: climate.jb_thermostat_custom_pid
+
+      - type: history-graph
+        title: Temperature & Valve History
+        hours_to_show: 24
+        entities:
+          - entity: climate.jb_thermostat_custom_pid
+            name: Temperature
+          - entity: number.jb_thermostat_pi_heating_demand
+            name: Valve %
+
+      - type: entities
+        title: Settings
+        entities:
+          - type: attribute
+            entity: climate.jb_thermostat_custom_pid
+            attribute: kp
+            name: Kp (Proportional gain)
+            icon: mdi:alpha-p-circle
+          - type: attribute
+            entity: climate.jb_thermostat_custom_pid
+            attribute: ki
+            name: Ki (Integral gain)
+            icon: mdi:alpha-i-circle
+          - type: attribute
+            entity: climate.jb_thermostat_custom_pid
+            attribute: kd
+            name: Kd (Derivative gain)
+            icon: mdi:alpha-d-circle
+          - type: attribute
+            entity: climate.jb_thermostat_custom_pid
+            attribute: floor_value
+            name: Floor value (%)
+            icon: mdi:arrow-collapse-down
+          - type: attribute
+            entity: climate.jb_thermostat_custom_pid
+            attribute: off_threshold
+            name: Off threshold (°C)
+            icon: mdi:thermometer-off
+          - type: attribute
+            entity: climate.jb_thermostat_custom_pid
+            attribute: boost_threshold
+            name: Boost threshold (°C)
+            icon: mdi:rocket-launch
+          - type: attribute
+            entity: climate.jb_thermostat_custom_pid
+            attribute: boost_value
+            name: Boost value (%)
+            icon: mdi:rocket-launch
+          - type: attribute
+            entity: climate.jb_thermostat_custom_pid
+            attribute: integral_max
+            name: Integral anti-windup limit
+            icon: mdi:arrow-collapse-vertical
+          - type: attribute
+            entity: climate.jb_thermostat_custom_pid
+            attribute: update_interval_min
+            name: Valve refresh (min)
+            icon: mdi:timer-refresh
+          - type: attribute
+            entity: climate.jb_thermostat_custom_pid
+            attribute: pid_sample_interval_sec
+            name: PID interval (sec)
+            icon: mdi:timer-cog
+          - type: attribute
+            entity: climate.jb_thermostat_custom_pid
+            attribute: sync_target_temperature
+            name: Sync target to real thermostat
+            icon: mdi:sync
+
+  - title: Batteries
+    path: batteries
+    icon: mdi:battery
+    cards:
+      - type: entities
+        title: Thermostat Batteries
+        entities:
+          - entity: sensor.lr_thermostat_window_battery
+            name: LR Window
+          - entity: sensor.lr_thermostat_balcony_battery
+            name: LR Balcony
+          - entity: sensor.br_thermostat_battery
+            name: Bedroom
+          - entity: sensor.jb_thermostat_battery
+            name: Jacob's Room
