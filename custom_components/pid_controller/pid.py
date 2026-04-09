@@ -16,6 +16,8 @@ class PIDController:
         floor_value: int,
         off_threshold: float,
         integral_max: float,
+        boost_threshold: float,
+        boost_value: int,
     ) -> None:
         """Initialize PID controller."""
         self.kp = kp
@@ -24,6 +26,8 @@ class PIDController:
         self.floor_value = floor_value
         self.off_threshold = off_threshold
         self.integral_max = integral_max
+        self.boost_threshold = boost_threshold
+        self.boost_value = boost_value
 
         self._integral: float = 0.0
         self._last_error: float | None = None
@@ -34,6 +38,7 @@ class PIDController:
         self.last_i: float = 0.0
         self.last_d: float = 0.0
         self.last_floor_active: bool = False
+        self.last_boost_active: bool = False
 
     def reset(self) -> None:
         """Reset PID state."""
@@ -49,6 +54,8 @@ class PIDController:
         floor_value: int,
         off_threshold: float,
         integral_max: float,
+        boost_threshold: float,
+        boost_value: int,
     ) -> None:
         """Update PID parameters at runtime."""
         self.kp = kp
@@ -57,6 +64,8 @@ class PIDController:
         self.floor_value = floor_value
         self.off_threshold = off_threshold
         self.integral_max = integral_max
+        self.boost_threshold = boost_threshold
+        self.boost_value = boost_value
 
     def compute(
         self,
@@ -75,6 +84,7 @@ class PIDController:
             Valve position as integer 0-100.
         """
         self.last_floor_active = False
+        self.last_boost_active = False
 
         if not is_heating or target_temp is None:
             self.reset()
@@ -84,6 +94,14 @@ class PIDController:
         if current_temp >= target_temp + self.off_threshold:
             self.reset()
             return 0
+
+        # Boost: force valve open when far below target for fast warmup
+        if (
+            self.boost_threshold > 0
+            and target_temp - current_temp >= self.boost_threshold
+        ):
+            self.last_boost_active = True
+            return self.boost_value
 
         now = time.monotonic()
         error = target_temp - current_temp  # positive = needs heating

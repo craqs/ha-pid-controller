@@ -32,3 +32,7 @@ CONF_MIN_TEMP = "min_temp"
 CONF_MAX_TEMP = "max_temp"
 CONF_SYNC_TARGET_TEMP = "sync_target_temperature"
 DEFAULT_SYNC_TARGET_TEMP = True
+CONF_BOOST_THRESHOLD = "boost_threshold"
+DEFAULT_BOOST_THRESHOLD = 1.5  # °C below target to activate boost
+CONF_BOOST_VALUE = "boost_value"
+DEFAULT_BOOST_VALUE = 100  # valve % during boost

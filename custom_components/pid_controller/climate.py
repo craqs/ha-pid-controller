@@ -23,6 +23,8 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
+    CONF_BOOST_THRESHOLD,
+    CONF_BOOST_VALUE,
     CONF_HEATING_DEMAND_ENTITY,
     CONF_KD,
     CONF_KI,
@@ -37,6 +39,8 @@ from .const import (
     CONF_FLOOR_VALUE,
     CONF_INTEGRAL_MAX,
     CONF_SYNC_TARGET_TEMP,
+    DEFAULT_BOOST_THRESHOLD,
+    DEFAULT_BOOST_VALUE,
     DEFAULT_KD,
     DEFAULT_KI,
     DEFAULT_KP,
@@ -241,6 +245,12 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
                 integral_max=entry.options.get(
                     CONF_INTEGRAL_MAX, DEFAULT_INTEGRAL_MAX
                 ),
+                boost_threshold=entry.options.get(
+                    CONF_BOOST_THRESHOLD, DEFAULT_BOOST_THRESHOLD
+                ),
+                boost_value=entry.options.get(
+                    CONF_BOOST_VALUE, DEFAULT_BOOST_VALUE
+                ),
             )
         if data and "entity" in data:
             entity: PIDVirtualThermostat = data["entity"]
@@ -385,4 +395,7 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             "sync_target_temperature": self._entry.options.get(
                 CONF_SYNC_TARGET_TEMP, DEFAULT_SYNC_TARGET_TEMP
             ),
+            "boost_threshold": self._pid.boost_threshold,
+            "boost_value": self._pid.boost_value,
+            "boost_active": self._pid.last_boost_active,
         }

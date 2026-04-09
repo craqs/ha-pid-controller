@@ -21,6 +21,8 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    CONF_BOOST_THRESHOLD,
+    CONF_BOOST_VALUE,
     CONF_FLOOR_VALUE,
     CONF_HEATING_DEMAND_ENTITY,
     CONF_INTEGRAL_MAX,
@@ -34,6 +36,8 @@ from .const import (
     CONF_REAL_THERMOSTAT_ENTITY,
     CONF_TEMPERATURE_ENTITY,
     CONF_UPDATE_INTERVAL,
+    DEFAULT_BOOST_THRESHOLD,
+    DEFAULT_BOOST_VALUE,
     DEFAULT_FLOOR_VALUE,
     DEFAULT_INTEGRAL_MAX,
     DEFAULT_KD,
@@ -233,6 +237,24 @@ class PIDControllerOptionsFlow(OptionsFlow):
                 ): NumberSelector(
                     NumberSelectorConfig(
                         min=10, max=500, step=10, mode=NumberSelectorMode.BOX
+                    )
+                ),
+                vol.Optional(
+                    CONF_BOOST_THRESHOLD,
+                    default=options.get(
+                        CONF_BOOST_THRESHOLD, DEFAULT_BOOST_THRESHOLD
+                    ),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0, max=5, step=0.1, mode=NumberSelectorMode.BOX
+                    )
+                ),
+                vol.Optional(
+                    CONF_BOOST_VALUE,
+                    default=options.get(CONF_BOOST_VALUE, DEFAULT_BOOST_VALUE),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=50, max=100, step=5, mode=NumberSelectorMode.SLIDER
                     )
                 ),
                 vol.Optional(

@@ -6,12 +6,16 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import (
+    CONF_BOOST_THRESHOLD,
+    CONF_BOOST_VALUE,
     CONF_FLOOR_VALUE,
     CONF_INTEGRAL_MAX,
     CONF_KD,
     CONF_KI,
     CONF_KP,
     CONF_OFF_THRESHOLD,
+    DEFAULT_BOOST_THRESHOLD,
+    DEFAULT_BOOST_VALUE,
     DEFAULT_FLOOR_VALUE,
     DEFAULT_INTEGRAL_MAX,
     DEFAULT_KD,
@@ -36,6 +40,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         floor_value=entry.options.get(CONF_FLOOR_VALUE, DEFAULT_FLOOR_VALUE),
         off_threshold=entry.options.get(CONF_OFF_THRESHOLD, DEFAULT_OFF_THRESHOLD),
         integral_max=entry.options.get(CONF_INTEGRAL_MAX, DEFAULT_INTEGRAL_MAX),
+        boost_threshold=entry.options.get(CONF_BOOST_THRESHOLD, DEFAULT_BOOST_THRESHOLD),
+        boost_value=entry.options.get(CONF_BOOST_VALUE, DEFAULT_BOOST_VALUE),
     )
 
     hass.data[DOMAIN][entry.entry_id] = {"pid": pid}
