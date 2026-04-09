@@ -20,6 +20,7 @@ from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
 )
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
     CONF_HEATING_DEMAND_ENTITY,
@@ -64,7 +65,10 @@ async def async_setup_entry(
     async_add_entities([entity])
 
 
-class PIDVirtualThermostat(ClimateEntity):
+DEFAULT_TARGET_TEMP = 20.0
+
+
+class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
     """Virtual thermostat that uses a custom PID to control a real radiator valve."""
 
     _attr_has_entity_name = True
@@ -106,6 +110,23 @@ class PIDVirtualThermostat(ClimateEntity):
 
     async def async_added_to_hass(self) -> None:
         """Set up listeners when entity is added."""
+        # Restore previous state
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            if last_state.state in (HVACMode.OFF, HVACMode.HEAT):
+                self._attr_hvac_mode = HVACMode(last_state.state)
+            if last_state.attributes.get(ATTR_TEMPERATURE) is not None:
+                try:
+                    self._attr_target_temperature = float(
+                        last_state.attributes[ATTR_TEMPERATURE]
+                    )
+                except (ValueError, TypeError):
+                    pass
+
+        # Ensure target temperature is never None
+        if self._attr_target_temperature is None:
+            self._attr_target_temperature = DEFAULT_TARGET_TEMP
+
         # Listen to temperature source changes
         self._unsub_listeners.append(
             async_track_state_change_event(
