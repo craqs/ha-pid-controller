@@ -112,6 +112,9 @@ class PIDController:
         # Proportional
         self.last_p = self.kp * error
 
+        # Save integral before update for anti-windup check
+        prev_integral = self._integral
+
         # Integral and Derivative
         if self._last_time is not None and self._last_error is not None:
             dt = now - self._last_time
@@ -143,6 +146,17 @@ class PIDController:
                 effective_floor = self.floor_value * (1.0 - overshoot_ratio)
 
             if raw_output < effective_floor:
+                # Anti-windup: when floor overrides the PID, don't let
+                # integral accumulate further against the floor direction.
+                # Without this, integral builds up a huge negative value
+                # while floor keeps the valve open above target, causing
+                # very slow recovery when heating is actually needed.
+                if error < 0 and self._integral < 0:
+                    self._integral = max(self._integral, prev_integral)
+                    self.last_i = self._integral
+                elif error > 0 and self._integral > 0:
+                    self._integral = min(self._integral, prev_integral)
+                    self.last_i = self._integral
                 self.last_floor_active = True
                 return int(effective_floor)
 

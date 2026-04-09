@@ -16,9 +16,18 @@ This integration creates virtual climate entities that:
 
 ### Floor Value Logic
 
-- When heating is needed, the valve never drops below the floor value (default 25%)
-- The valve only closes to 0% when the room temperature exceeds the target by a configurable threshold (default 1°C)
+- When heating is needed and the room is at or below the target, the valve never drops below the floor value (default 25%)
+- Between the target and `target + off_threshold`, the floor **decays proportionally** — e.g., at 0.3°C above target with off_threshold=1.0, the effective floor is `25% × (1 - 0.3/1.0) = 17%`
+- The valve only closes to 0% when the room temperature exceeds the target by the off threshold (default 1°C)
 - This keeps a gentle flow of warm water through the radiator, preventing the "cold feeling"
+
+### Boost Mode
+
+When the room is significantly below the target temperature (by default 1.5°C or more), the valve is forced to 100% to warm up the room as quickly as possible. Once the temperature gets closer to the target, normal PID control takes over. Boost can be disabled by setting the threshold to 0.
+
+### Target Temperature Sync
+
+Optionally syncs the target temperature to the real thermostat (enabled by default). This keeps the thermostat's display correct and makes the built-in PID a safer fallback if the integration stops sending commands.
 
 ## Installation
 
@@ -109,6 +118,9 @@ On top of the standard PID, this integration adds **floor value logic** and an *
 | Min temperature | 5.0 | 0–15 | °C |
 | Max temperature | 30.0 | 15–40 | °C |
 | Integral anti-windup limit | 100.0 | 10–500 | — |
+| Boost threshold | 1.5 | 0–10 | °C |
+| Boost valve opening | 100 | 0–100 | % |
+| Sync target temperature | On | On/Off | — |
 
 ### Kp — Proportional Gain
 
@@ -131,7 +143,7 @@ On top of the standard PID, this integration adds **floor value logic** and an *
 - **Too low** (e.g., 0.001): The system is very slow to correct small persistent offsets. The room might settle 0.2–0.5°C below target.
 - **Too high** (e.g., 0.05): The integral accumulates too quickly, causing the temperature to overshoot the target, then undershoot, then overshoot again (oscillation). This is the most common PID tuning mistake.
 - **Start here**: Leave at 0.005. If the room consistently settles slightly below target (check over 1–2 hours), double it to 0.01. If you see slow temperature oscillations (period of 30+ minutes), halve it.
-- **Note**: The integral is reset to zero whenever the temperature exceeds `target + off_threshold` or when HVAC mode is set to OFF. This prevents the integral from accumulating a huge value during long heating periods.
+- **Note**: The integral is reset to zero whenever the temperature exceeds `target + off_threshold` or when HVAC mode is set to OFF. Additionally, when the floor value is overriding the PID output, the integral is frozen to prevent windup in the opposing direction.
 
 ### Kd — Derivative Gain
 
@@ -153,6 +165,15 @@ On top of the standard PID, this integration adds **floor value logic** and an *
 
 **Example**: With floor_value=25 and the room 0.2°C below target, the PID might calculate 3% valve opening. Instead of 3%, the valve stays at 25%, keeping a gentle flow of warm water through the radiator.
 
+**Proportional decay above target**: When the temperature is between the target and `target + off_threshold`, the floor decays linearly rather than dropping to 0% abruptly. The formula is:
+
+```
+effective_floor = floor_value × (1 - (current - target) / off_threshold)
+```
+
+For example, with floor_value=25, off_threshold=1.0, and the room 0.3°C above target:
+`25 × (1 - 0.3/1.0) = 17%`. This smooth decay prevents the valve from jumping between floor and 0%.
+
 **The valve goes to 0% only when** the room temperature exceeds `target + off_threshold` (see below).
 
 **How to tune**:
@@ -167,12 +188,13 @@ On top of the standard PID, this integration adds **floor value logic** and an *
 
 **This works hand-in-hand with the floor value.** Together they create a "comfort band":
 - Below target: valve at PID-calculated value (but at least floor_value)
-- Between target and target + off_threshold: valve at floor_value (gentle heating continues)
-- Above target + off_threshold: valve at 0% (heating stops)
+- Between target and target + off_threshold: floor decays proportionally from floor_value to 0%
+- Above target + off_threshold: valve at 0% (heating stops, PID resets)
 
-**Example**: Target is 22°C, off_threshold is 1.0°C.
+**Example**: Target is 22°C, off_threshold is 1.0°C, floor_value is 25%.
 - Room at 21.5°C → PID active, valve at calculated value (minimum 25%)
-- Room at 22.3°C → PID says low/zero, but floor value kicks in: valve at 25%
+- Room at 22.3°C → effective floor = `25% × (1 - 0.3/1.0) = 17%`
+- Room at 22.7°C → effective floor = `25% × (1 - 0.7/1.0) = 7%`
 - Room at 23.0°C → valve closes to 0%, heating stops completely
 
 **How to tune**:
@@ -221,6 +243,37 @@ These don't affect the PID algorithm itself — they only constrain the `set_tem
 - **Decrease to 50**: If you see large temperature overshoots after extended heating-up periods. This limits how much "history" the integral can accumulate.
 - **Increase to 200**: If the system struggles to reach the target and you've already increased Ki. A higher limit allows the integral to compensate for larger persistent errors.
 - **Note**: The integral is also reset when the temperature crosses the off threshold, which naturally prevents windup in normal operation.
+- **Floor anti-windup**: When the floor value is overriding the PID output, the integral is frozen to prevent it from accumulating against the floor direction. Without this, the integral would build up a large negative value while the floor keeps the valve open above target, causing very slow recovery when heating is needed again.
+
+### Boost Threshold — Fast Warmup Trigger
+
+**What it does**: When the room temperature is this many degrees below the target, the valve is forced to the boost value (default 100%) for rapid warmup. Normal PID control resumes once the temperature gets closer to the target.
+
+**Example**: With boost_threshold=1.5 and target=23°C, if the room is at 21°C (2°C below target), the valve goes straight to 100%. When the room warms to 21.5°C (only 1.5°C below), boost deactivates and PID takes over.
+
+**How to tune**:
+- **Too low** (e.g., 0.5°C): Boost activates too often, even for small setpoint changes. The valve slams to 100% when it's not really needed.
+- **Too high** (e.g., 5°C): Boost rarely activates. The room takes a long time to warm up after being cold (e.g., after opening windows or overnight setback).
+- **Set to 0**: Disables boost entirely. The PID handles all warmup gradually.
+- **Start here**: 1.5°C. If warmup from cold feels too slow, decrease to 1.0°C. If the valve goes to 100% too aggressively on small setpoint changes, increase to 2.0°C.
+
+### Boost Valve Opening
+
+**What it does**: The valve opening percentage used during boost mode.
+
+**How to tune**:
+- **100% (default)**: Maximum heat output during warmup. Best for getting the room to temperature quickly.
+- **Decrease to 70–80%**: If 100% causes the radiator to make noise (some radiators click or hiss at full flow) or if you want a slightly gentler warmup.
+- **Tip**: Check the `boost_active` attribute on the virtual thermostat to see when boost is engaged.
+
+### Sync Target Temperature
+
+**What it does**: When enabled, the target temperature set on the virtual thermostat is also sent to the real thermostat via the `climate.set_temperature` service. This is purely informational for the real thermostat — the custom PID still controls the valve directly via the heating demand entity.
+
+**Why it matters**:
+- **Display**: The real thermostat's screen shows the correct target temperature instead of a stale value.
+- **Fallback safety**: If the integration stops sending valve commands (e.g., HA crashes), the real thermostat's built-in PID has a reasonable target to fall back on.
+- **Default**: Enabled. There's rarely a reason to disable this unless you have a specific reason to keep the real thermostat's target independent.
 
 ### Tuning Workflow — Step by Step
 
@@ -255,30 +308,46 @@ If you're starting from scratch, follow this sequence:
 ```
 Kp: 15, Ki: 0.005, Kd: 2
 Floor value: 30%, Off threshold: 1.5°C
+Boost threshold: 1.5°C, Boost value: 100%
 ```
 
 **Well-insulated bedroom** (temperature stays stable, less heating needed):
 ```
 Kp: 10, Ki: 0.003, Kd: 1
 Floor value: 20%, Off threshold: 0.8°C
+Boost threshold: 1.0°C, Boost value: 80%
 ```
 
 **Drafty room / large windows** (temperature drops fast, needs aggressive heating):
 ```
 Kp: 25, Ki: 0.008, Kd: 3
 Floor value: 35%, Off threshold: 2.0°C
+Boost threshold: 2.0°C, Boost value: 100%
 ```
 
 **Energy-saving mode** (accept wider temperature swings for lower consumption):
 ```
 Kp: 10, Ki: 0.003, Kd: 1
 Floor value: 15%, Off threshold: 0.5°C
+Boost threshold: 0 (disabled)
 ```
 
 ## Debugging
 
-The virtual thermostat exposes extra state attributes:
-- `valve_position`: Current valve opening percentage
-- `pid_p`, `pid_i`, `pid_d`: PID component values
-- `floor_active`: Whether the floor value is currently being applied
+The virtual thermostat exposes extra state attributes in Developer Tools → States:
+
+**PID output:**
+- `valve_position`: Current valve opening percentage (0–100)
+- `pid_p`, `pid_i`, `pid_d`: Individual PID component values
+- `floor_active`: Whether the floor value is currently overriding the PID output
+- `boost_active`: Whether boost mode is currently engaged
+
+**Configuration (read-only mirrors of current settings):**
+- `kp`, `ki`, `kd`: Current PID gains
+- `floor_value`, `off_threshold`: Floor and off threshold settings
+- `integral_max`: Anti-windup limit
+- `boost_threshold`, `boost_value`: Boost mode settings
+- `update_interval_min`: Valve refresh interval in minutes
+- `pid_sample_interval_sec`: PID calculation interval in seconds
+- `sync_target_temperature`: Whether target temp sync is enabled
 - `heating_demand_entity`: The auto-detected entity being controlled
