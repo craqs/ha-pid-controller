@@ -339,4 +339,16 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             "pid_d": round(self._pid.last_d, 2),
             "floor_active": self._pid.last_floor_active,
             "heating_demand_entity": self._heating_demand_entity,
+            "kp": self._pid.kp,
+            "ki": self._pid.ki,
+            "kd": self._pid.kd,
+            "floor_value": self._pid.floor_value,
+            "off_threshold": self._pid.off_threshold,
+            "integral_max": self._pid.integral_max,
+            "update_interval_min": self._entry.options.get(
+                CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
+            ),
+            "pid_sample_interval_sec": self._entry.options.get(
+                CONF_PID_SAMPLE_INTERVAL, DEFAULT_PID_SAMPLE_INTERVAL
+            ),
         }
