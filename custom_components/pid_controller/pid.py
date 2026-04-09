@@ -112,8 +112,8 @@ class PIDController:
         raw_output = self.last_p + self.last_i + self.last_d
         raw_output = max(0.0, min(100.0, raw_output))
 
-        # Floor logic: keep valve at minimum opening when heating is needed
-        if raw_output < self.floor_value and current_temp < target_temp:
+        # Floor logic: keep valve at minimum opening until off_threshold is reached
+        if raw_output < self.floor_value and current_temp < target_temp + self.off_threshold:
             self.last_floor_active = True
             return self.floor_value
 
