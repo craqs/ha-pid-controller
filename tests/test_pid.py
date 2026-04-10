@@ -94,6 +94,18 @@ class TestOffConditions:
         tick(pid, 24.5, 23.0)
         assert pid._integral == 0.0
 
+    def test_clears_debug_values_above_off_threshold(self):
+        pid = make_pid(kp=50.0, ki=0.01, kd=0, off_threshold=1.0, boost_threshold=0, floor_value=5)
+        tick(pid, 22.5, 23.0, time_offset=0.0)
+        tick(pid, 22.5, 23.0)
+        assert pid.last_p != 0.0
+        assert pid.last_i != 0.0
+        # Go above threshold - debug values should be cleared
+        tick(pid, 24.5, 23.0)
+        assert pid.last_p == 0.0
+        assert pid.last_i == 0.0
+        assert pid.last_d == 0.0
+
 
 # --- Boost mode ---
 

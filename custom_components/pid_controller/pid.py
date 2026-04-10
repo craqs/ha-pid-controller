@@ -96,6 +96,9 @@ class PIDController:
         # If significantly above target, close valve completely
         if current_temp >= target_temp + self.off_threshold:
             self.reset()
+            self.last_p = 0.0
+            self.last_i = 0.0
+            self.last_d = 0.0
             return 0
 
         # Boost: force valve open when far below target for fast warmup
