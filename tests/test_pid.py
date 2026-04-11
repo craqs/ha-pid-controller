@@ -316,6 +316,39 @@ class TestFloorAntiWindup:
         # Integral should have moved toward zero (become less negative)
         assert pid._integral > -5.0
 
+    def test_integral_unwinds_toward_zero_during_floor_above_target(self):
+        """When floor is active with positive integral and temp above target,
+        integral should decay toward zero — not stay frozen."""
+        pid = make_pid(kp=15.0, ki=0.005, kd=0, floor_value=25, off_threshold=1.0)
+
+        # Build up positive integral (simulating prior heating demand)
+        tick(pid, 22.5, 23.0, time_offset=0.0)
+        for _ in range(50):
+            tick(pid, 22.5, 23.0)
+        i_positive = pid._integral
+        assert i_positive > 0  # should have accumulated positive integral
+
+        # Now temp overshoots above target — error is negative,
+        # floor is still active (within off_threshold)
+        tick(pid, 23.3, 23.0)
+        i_after = pid._integral
+        # Integral should have decreased (unwinding toward zero)
+        assert i_after < i_positive
+
+    def test_integral_does_not_go_negative_during_floor_above_target(self):
+        """Integral should be clamped at zero during floor override with
+        negative error — it must not accumulate negative windup."""
+        pid = make_pid(kp=15.0, ki=0.005, kd=0, floor_value=25, off_threshold=1.0)
+
+        # Start with zero integral, temp above target
+        tick(pid, 23.3, 23.0, time_offset=0.0)
+        # Multiple ticks with negative error during floor override
+        for _ in range(100):
+            tick(pid, 23.3, 23.0)
+
+        # Integral must not go negative
+        assert pid._integral >= 0
+
     def test_integral_accumulates_positive_during_floor_below_target(self):
         """When below target and floor is active, integral must keep growing
         so raw PID eventually exceeds the floor — the living room scenario."""
