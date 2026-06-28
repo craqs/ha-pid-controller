@@ -223,6 +223,9 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
 
     async def _async_refresh_valve(self, _now=None) -> None:
         """Re-send current valve position to prevent built-in PID takeover."""
+        # When off, the real thermostat is also off; don't keep poking it.
+        if self._attr_hvac_mode == HVACMode.OFF:
+            return
         async with self._lock:
             await self._async_send_valve_position(self._valve_position)
 
@@ -265,6 +268,10 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             return
         self._attr_target_temperature = temp
         self.async_write_ha_state()
+        # A numeric setpoint implies heating; make sure the real thermostat is
+        # back on before syncing (it may have been turned off while idle).
+        if self._attr_hvac_mode != HVACMode.OFF:
+            await self._async_set_real_hvac_mode(HVACMode.HEAT)
         await self._async_sync_target_temp(temp)
         await self._async_recalculate_and_send()
 
@@ -277,7 +284,13 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
                 self._valve_position = 0
                 self._pid.reset()
                 await self._async_send_valve_position(0)
+            # Mirror the off state onto the real thermostat so its valve doesn't
+            # stay parked at the last synced target temperature (e.g. Schedy
+            # summer mode leaving valves showing 21.5/23.5 °C).
+            await self._async_set_real_hvac_mode(HVACMode.OFF)
         else:
+            # Restore the real thermostat to heat before resuming valve control.
+            await self._async_set_real_hvac_mode(HVACMode.HEAT)
             await self._async_recalculate_and_send()
 
     async def async_turn_on(self) -> None:
@@ -315,6 +328,42 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             _LOGGER.exception(
                 "Failed to sync target temperature to %s", entity_id
             )
+
+    async def _async_set_real_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        """Mirror our on/off state onto the real thermostat if sync is enabled.
+
+        Without this, turning the PID off only zeroes the heating demand but
+        leaves the real valve displaying its last target temperature. Gated by
+        the same option as target-temperature sync, so users who manage the
+        real thermostat independently are unaffected.
+        """
+        if not self._entry.options.get(
+            CONF_SYNC_TARGET_TEMP, DEFAULT_SYNC_TARGET_TEMP
+        ):
+            return
+
+        entity_id = self._real_thermostat_entity
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in ("unavailable", "unknown"):
+            _LOGGER.warning(
+                "Real thermostat %s is not available, skipping HVAC mode sync",
+                entity_id,
+            )
+            return
+
+        # Already in the desired mode - avoid a redundant write.
+        if state.state == hvac_mode:
+            return
+
+        try:
+            await self.hass.services.async_call(
+                "climate",
+                "set_hvac_mode",
+                {"entity_id": entity_id, "hvac_mode": hvac_mode},
+                blocking=True,
+            )
+        except Exception:
+            _LOGGER.exception("Failed to sync HVAC mode to %s", entity_id)
 
     async def _async_recalculate_and_send(self) -> None:
         """Run PID calculation and send valve position."""
