@@ -36,3 +36,5 @@ CONF_BOOST_THRESHOLD = "boost_threshold"
 DEFAULT_BOOST_THRESHOLD = 1.5  # °C below target to activate boost
 CONF_BOOST_VALUE = "boost_value"
 DEFAULT_BOOST_VALUE = 100  # valve % during boost
+CONF_STALE_TIMEOUT = "sensor_stale_timeout"
+DEFAULT_STALE_TIMEOUT = 60  # minutes without a temperature update before failsafe; 0 disables

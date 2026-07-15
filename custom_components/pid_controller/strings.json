@@ -13,11 +13,33 @@
           "temperature_entity": "Sensor or climate entity that provides the current room temperature.",
           "real_thermostat_entity": "The real Zigbee thermostat. Its PI heating demand entity will be auto-detected."
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure PID Controller Thermostat",
+        "description": "Update the entities used by this virtual thermostat. The PI heating demand entity will be re-detected from the real thermostat's device.",
+        "data": {
+          "name": "Name",
+          "temperature_entity": "Temperature source entity",
+          "real_thermostat_entity": "Real thermostat entity"
+        },
+        "data_description": {
+          "temperature_entity": "Sensor or climate entity that provides the current room temperature.",
+          "real_thermostat_entity": "The real Zigbee thermostat. Its PI heating demand entity will be re-detected."
+        }
+      },
+      "manual_demand": {
+        "title": "Select heating demand entity",
+        "description": "No PI heating demand entity could be auto-detected on the thermostat's device. Pick the number entity (0-100 %) that controls the valve opening.",
+        "data": {
+          "heating_demand_entity": "PI heating demand entity"
+        }
       }
     },
     "error": {
-      "heating_demand_not_found": "Could not find a PI heating demand entity on the same device as the selected thermostat.",
       "already_configured": "This thermostat is already controlled by another PID Controller entry."
+    },
+    "abort": {
+      "reconfigure_successful": "Reconfiguration successful."
     }
   },
   "options": {
@@ -37,15 +59,18 @@
           "integral_max": "Integral anti-windup limit",
           "boost_threshold": "Boost threshold (°C below target)",
           "boost_value": "Boost valve opening (%)",
+          "sensor_stale_timeout": "Sensor stale timeout (minutes)",
           "sync_target_temperature": "Sync target temperature to real thermostat"
         },
         "data_description": {
+          "kd": "Braking on temperature slope, in % valve per °C/hour of change. Acts on the measured temperature (no setpoint kick) and is low-pass filtered.",
           "floor_value": "Minimum valve opening percentage when heating is needed. Prevents the valve from closing completely.",
           "off_threshold": "Degrees above target temperature before the valve fully closes to 0%.",
           "update_interval": "How often to re-send the valve position to prevent the built-in PID from taking over.",
-          "pid_sample_interval": "How often the PID algorithm recalculates the valve position.",
+          "pid_sample_interval": "How often the PID algorithm recalculates the valve position. Writes are only sent when the value changes.",
           "boost_threshold": "When the room is this many degrees below target, the valve opens to the boost value for fast warmup. Set to 0 to disable boost.",
           "boost_value": "Valve opening percentage during boost mode.",
+          "sensor_stale_timeout": "If the temperature source stops reporting for this long, valve control is paused so the thermostat's built-in controller can take over as a safe fallback. Set to 0 to disable.",
           "sync_target_temperature": "When enabled, the target temperature is also sent to the real thermostat. Keeps its display correct and makes the built-in PID a safer fallback."
         }
       }

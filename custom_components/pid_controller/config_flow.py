@@ -7,7 +7,12 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
+from homeassistant.config_entries import (
+    SOURCE_RECONFIGURE,
+    ConfigEntry,
+    ConfigFlow,
+    OptionsFlow,
+)
 from homeassistant.const import CONF_NAME
 from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
@@ -34,6 +39,8 @@ from .const import (
     CONF_OFF_THRESHOLD,
     CONF_PID_SAMPLE_INTERVAL,
     CONF_REAL_THERMOSTAT_ENTITY,
+    CONF_STALE_TIMEOUT,
+    CONF_SYNC_TARGET_TEMP,
     CONF_TEMPERATURE_ENTITY,
     CONF_UPDATE_INTERVAL,
     DEFAULT_BOOST_THRESHOLD,
@@ -47,13 +54,25 @@ from .const import (
     DEFAULT_MIN_TEMP,
     DEFAULT_OFF_THRESHOLD,
     DEFAULT_PID_SAMPLE_INTERVAL,
+    DEFAULT_STALE_TIMEOUT,
     DEFAULT_SYNC_TARGET_TEMP,
     DEFAULT_UPDATE_INTERVAL,
-    CONF_SYNC_TARGET_TEMP,
     DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+USER_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_NAME): str,
+        vol.Required(CONF_TEMPERATURE_ENTITY): EntitySelector(
+            EntitySelectorConfig(domain=["sensor", "climate"])
+        ),
+        vol.Required(CONF_REAL_THERMOSTAT_ENTITY): EntitySelector(
+            EntitySelectorConfig(domain="climate")
+        ),
+    }
+)
 
 
 def _find_heating_demand_entity(
@@ -86,48 +105,103 @@ class PIDControllerConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    def __init__(self) -> None:
+        """Initialize the flow."""
+        self._user_input: dict[str, Any] = {}
+
+    def _is_duplicate_demand(self, heating_demand: str) -> bool:
+        """Check if another entry already controls this demand entity."""
+        reconfigure_id = (
+            self._get_reconfigure_entry().entry_id
+            if self.source == SOURCE_RECONFIGURE
+            else None
+        )
+        return any(
+            entry.data.get(CONF_HEATING_DEMAND_ENTITY) == heating_demand
+            and entry.entry_id != reconfigure_id
+            for entry in self._async_current_entries()
+        )
+
+    def _async_finish(self, data: dict[str, Any]) -> dict:
+        """Create the entry, or update it when reconfiguring."""
+        if self.source == SOURCE_RECONFIGURE:
+            return self.async_update_reload_and_abort(
+                self._get_reconfigure_entry(),
+                title=data[CONF_NAME],
+                data=data,
+            )
+        return self.async_create_entry(title=data[CONF_NAME], data=data)
+
+    async def _async_handle_thermostat_form(
+        self, user_input: dict[str, Any] | None, step_id: str
+    ) -> dict:
+        """Shared logic for the user and reconfigure steps."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            heating_demand = _find_heating_demand_entity(
+                self.hass, user_input[CONF_REAL_THERMOSTAT_ENTITY]
+            )
+            if heating_demand is None:
+                # Fall back to picking the demand entity manually.
+                self._user_input = dict(user_input)
+                return await self.async_step_manual_demand()
+            if self._is_duplicate_demand(heating_demand):
+                errors[CONF_REAL_THERMOSTAT_ENTITY] = "already_configured"
+            else:
+                return self._async_finish(
+                    {**user_input, CONF_HEATING_DEMAND_ENTITY: heating_demand}
+                )
+
+        schema = USER_SCHEMA
+        if self.source == SOURCE_RECONFIGURE:
+            schema = self.add_suggested_values_to_schema(
+                schema, self._get_reconfigure_entry().data
+            )
+
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=schema,
+            errors=errors,
+        )
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> dict:
         """Handle the initial step."""
+        return await self._async_handle_thermostat_form(user_input, "user")
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> dict:
+        """Handle reconfiguration of an existing entry."""
+        return await self._async_handle_thermostat_form(user_input, "reconfigure")
+
+    async def async_step_manual_demand(
+        self, user_input: dict[str, Any] | None = None
+    ) -> dict:
+        """Pick the heating demand entity manually when auto-detect fails."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Auto-detect heating demand entity
-            heating_demand = _find_heating_demand_entity(
-                self.hass, user_input[CONF_REAL_THERMOSTAT_ENTITY]
-            )
-
-            if heating_demand is None:
-                errors[CONF_REAL_THERMOSTAT_ENTITY] = "heating_demand_not_found"
+            heating_demand = user_input[CONF_HEATING_DEMAND_ENTITY]
+            if self._is_duplicate_demand(heating_demand):
+                errors[CONF_HEATING_DEMAND_ENTITY] = "already_configured"
             else:
-                # Check for duplicate heating demand entity usage
-                for entry in self._async_current_entries():
-                    if entry.data.get(CONF_HEATING_DEMAND_ENTITY) == heating_demand:
-                        errors[CONF_REAL_THERMOSTAT_ENTITY] = "already_configured"
-                        break
-
-            if not errors:
-                user_input[CONF_HEATING_DEMAND_ENTITY] = heating_demand
-                return self.async_create_entry(
-                    title=user_input[CONF_NAME],
-                    data=user_input,
+                return self._async_finish(
+                    {**self._user_input, CONF_HEATING_DEMAND_ENTITY: heating_demand}
                 )
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_NAME): str,
-                vol.Required(CONF_TEMPERATURE_ENTITY): EntitySelector(
-                    EntitySelectorConfig(domain=["sensor", "climate"])
-                ),
-                vol.Required(CONF_REAL_THERMOSTAT_ENTITY): EntitySelector(
-                    EntitySelectorConfig(domain="climate")
+                vol.Required(CONF_HEATING_DEMAND_ENTITY): EntitySelector(
+                    EntitySelectorConfig(domain="number")
                 ),
             }
         )
 
         return self.async_show_form(
-            step_id="user",
+            step_id="manual_demand",
             data_schema=schema,
             errors=errors,
         )
@@ -136,15 +210,11 @@ class PIDControllerConfigFlow(ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
         """Get the options flow."""
-        return PIDControllerOptionsFlow(config_entry)
+        return PIDControllerOptionsFlow()
 
 
 class PIDControllerOptionsFlow(OptionsFlow):
     """Handle options flow for PID Controller."""
-
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        """Initialize options flow."""
-        self._config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -153,7 +223,7 @@ class PIDControllerOptionsFlow(OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        options = self._config_entry.options
+        options = self.config_entry.options
 
         schema = vol.Schema(
             {
@@ -255,6 +325,14 @@ class PIDControllerOptionsFlow(OptionsFlow):
                 ): NumberSelector(
                     NumberSelectorConfig(
                         min=50, max=100, step=5, mode=NumberSelectorMode.SLIDER
+                    )
+                ),
+                vol.Optional(
+                    CONF_STALE_TIMEOUT,
+                    default=options.get(CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0, max=360, step=5, mode=NumberSelectorMode.BOX
                     )
                 ),
                 vol.Optional(
