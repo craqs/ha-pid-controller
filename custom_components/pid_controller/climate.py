@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.components.climate import (
@@ -14,7 +16,7 @@ from homeassistant.components.climate import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.core import Event, HomeAssistant, State, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import (
     async_track_state_change_event,
@@ -23,40 +25,31 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
-    CONF_BOOST_THRESHOLD,
-    CONF_BOOST_VALUE,
     CONF_HEATING_DEMAND_ENTITY,
-    CONF_KD,
-    CONF_KI,
-    CONF_KP,
     CONF_MAX_TEMP,
     CONF_MIN_TEMP,
-    CONF_OFF_THRESHOLD,
     CONF_PID_SAMPLE_INTERVAL,
     CONF_REAL_THERMOSTAT_ENTITY,
+    CONF_STALE_TIMEOUT,
+    CONF_SYNC_TARGET_TEMP,
     CONF_TEMPERATURE_ENTITY,
     CONF_UPDATE_INTERVAL,
-    CONF_FLOOR_VALUE,
-    CONF_INTEGRAL_MAX,
-    CONF_SYNC_TARGET_TEMP,
-    DEFAULT_BOOST_THRESHOLD,
-    DEFAULT_BOOST_VALUE,
-    DEFAULT_KD,
-    DEFAULT_KI,
-    DEFAULT_KP,
     DEFAULT_MAX_TEMP,
     DEFAULT_MIN_TEMP,
-    DEFAULT_OFF_THRESHOLD,
     DEFAULT_PID_SAMPLE_INTERVAL,
-    DEFAULT_UPDATE_INTERVAL,
-    DEFAULT_FLOOR_VALUE,
-    DEFAULT_INTEGRAL_MAX,
+    DEFAULT_STALE_TIMEOUT,
     DEFAULT_SYNC_TARGET_TEMP,
+    DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
 )
 from .pid import PIDController
 
 _LOGGER = logging.getLogger(__name__)
+
+# Minimum seconds between event-driven re-sends when the heating demand
+# entity reports a value we didn't command (built-in PID takeover). Bounds
+# Zigbee traffic if a device persistently quantizes our writes.
+MIN_ENFORCE_INTERVAL = 60.0
 
 
 async def async_setup_entry(
@@ -67,7 +60,6 @@ async def async_setup_entry(
     """Set up PID Controller climate entity from config entry."""
     data = hass.data[DOMAIN][entry.entry_id]
     entity = PIDVirtualThermostat(hass, entry, data["pid"])
-    data["entity"] = entity
     async_add_entities([entity])
 
 
@@ -112,6 +104,12 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
         self._real_thermostat_entity = entry.data[CONF_REAL_THERMOSTAT_ENTITY]
 
         self._valve_position: int = 0
+        # Last value confirmed written to the demand entity; None forces the
+        # next PID tick to write even if the computed value didn't change.
+        self._last_sent_valve: int | None = None
+        self._last_temp_update: float | None = None
+        self._sensor_stale_logged = False
+        self._last_enforce: float = 0.0
         self._unsub_listeners: list = []
 
     async def async_added_to_hass(self) -> None:
@@ -151,12 +149,21 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             )
         )
 
+        # Listen to the heating demand entity: detect built-in PID takeover
+        # and recover from unavailability without waiting for the refresh.
+        if self._heating_demand_entity:
+            self._unsub_listeners.append(
+                async_track_state_change_event(
+                    self.hass,
+                    [self._heating_demand_entity],
+                    self._async_demand_changed,
+                )
+            )
+
         # PID sample interval
         sample_interval = self._entry.options.get(
             CONF_PID_SAMPLE_INTERVAL, DEFAULT_PID_SAMPLE_INTERVAL
         )
-        from datetime import timedelta
-
         self._unsub_listeners.append(
             async_track_time_interval(
                 self.hass,
@@ -177,18 +184,20 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             )
         )
 
-        # Listen for options updates
-        self._entry.async_on_unload(
-            self._entry.add_update_listener(self._async_options_updated)
+        # Initial availability from the real thermostat
+        thermostat_state = self.hass.states.get(self._real_thermostat_entity)
+        self._attr_available = (
+            thermostat_state is not None
+            and thermostat_state.state != "unavailable"
         )
 
         # Read initial temperature
-        temp_state = self.hass.states.get(self._temperature_entity)
-        if temp_state and temp_state.state not in ("unavailable", "unknown"):
-            try:
-                self._attr_current_temperature = float(temp_state.state)
-            except (ValueError, TypeError):
-                pass
+        temp = self._read_temperature(
+            self.hass.states.get(self._temperature_entity)
+        )
+        if temp is not None:
+            self._attr_current_temperature = temp
+            self._last_temp_update = time.monotonic()
 
     async def async_will_remove_from_hass(self) -> None:
         """Clean up listeners."""
@@ -196,17 +205,65 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             unsub()
         self._unsub_listeners.clear()
 
+    @staticmethod
+    def _read_temperature(state: State | None) -> float | None:
+        """Extract a temperature from a sensor or climate source state."""
+        if state is None or state.state in ("unavailable", "unknown"):
+            return None
+        if state.domain == "climate":
+            value = state.attributes.get("current_temperature")
+        else:
+            value = state.state
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+
+    def _sensor_is_stale(self) -> bool:
+        """Return True if the temperature source stopped reporting."""
+        timeout_min = self._entry.options.get(
+            CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT
+        )
+        if not timeout_min:
+            return False
+        if (
+            self._attr_current_temperature is None
+            or self._last_temp_update is None
+        ):
+            return True
+        return time.monotonic() - self._last_temp_update > timeout_min * 60
+
+    def _mark_sensor_stale(self) -> None:
+        """Log once and expose the stale condition; valve writes are paused."""
+        if not self._sensor_stale_logged:
+            self._sensor_stale_logged = True
+            _LOGGER.warning(
+                "Temperature source %s stopped reporting; pausing valve "
+                "control on %s so the thermostat's built-in controller can "
+                "take over as fallback",
+                self._temperature_entity,
+                self._heating_demand_entity,
+            )
+            self.async_write_ha_state()
+
     @callback
     def _async_temperature_changed(self, event: Event) -> None:
         """Handle temperature sensor state change."""
-        new_state = event.data.get("new_state")
-        if new_state is None or new_state.state in ("unavailable", "unknown"):
+        temp = self._read_temperature(event.data.get("new_state"))
+        if temp is None:
             return
-        try:
-            self._attr_current_temperature = float(new_state.state)
-            self.async_write_ha_state()
-        except (ValueError, TypeError):
-            pass
+        self._attr_current_temperature = temp
+        self._last_temp_update = time.monotonic()
+        if self._sensor_stale_logged:
+            self._sensor_stale_logged = False
+            _LOGGER.info(
+                "Temperature source %s is reporting again; resuming valve "
+                "control",
+                self._temperature_entity,
+            )
+        self.async_write_ha_state()
 
     @callback
     def _async_thermostat_state_changed(self, event: Event) -> None:
@@ -216,6 +273,50 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             return
         self._attr_available = new_state.state not in ("unavailable",)
         self.async_write_ha_state()
+
+    @callback
+    def _async_demand_changed(self, event: Event) -> None:
+        """Watch the heating demand entity we control.
+
+        If it reports a value we didn't command while we're actively heating,
+        the built-in controller took over (or a write was lost) - re-assert
+        our position immediately instead of waiting for the periodic refresh.
+        """
+        new_state = event.data.get("new_state")
+        if new_state is None or new_state.state in ("unavailable", "unknown"):
+            # Force a write once it recovers (next event or next PID tick).
+            self._last_sent_valve = None
+            return
+        if self._attr_hvac_mode != HVACMode.HEAT:
+            return
+        if self._sensor_is_stale():
+            # Deliberately ceding control to the built-in fallback.
+            return
+        try:
+            reported = int(float(new_state.state) + 0.5)
+        except (ValueError, TypeError):
+            return
+        if reported == self._valve_position:
+            self._last_sent_valve = self._valve_position
+            return
+        now = time.monotonic()
+        if now - self._last_enforce < MIN_ENFORCE_INTERVAL:
+            return
+        self._last_enforce = now
+        _LOGGER.debug(
+            "%s reports %s%% but we commanded %s%%; re-asserting",
+            self._heating_demand_entity,
+            reported,
+            self._valve_position,
+        )
+        self.hass.async_create_task(self._async_enforce_valve())
+
+    async def _async_enforce_valve(self) -> None:
+        """Re-send our valve position after an external change."""
+        async with self._lock:
+            if self._attr_hvac_mode != HVACMode.HEAT:
+                return
+            await self._async_send_valve_position(self._valve_position)
 
     async def _async_pid_tick(self, _now=None) -> None:
         """Periodic PID recalculation."""
@@ -227,45 +328,17 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
         if self._attr_hvac_mode == HVACMode.OFF:
             return
         async with self._lock:
+            if self._sensor_is_stale():
+                self._mark_sensor_stale()
+                return
             await self._async_send_valve_position(self._valve_position)
-
-    @staticmethod
-    async def _async_options_updated(
-        hass: HomeAssistant, entry: ConfigEntry
-    ) -> None:
-        """Handle options update."""
-        data = hass.data[DOMAIN].get(entry.entry_id)
-        if data and "pid" in data:
-            pid: PIDController = data["pid"]
-            pid.update_params(
-                kp=entry.options.get(CONF_KP, DEFAULT_KP),
-                ki=entry.options.get(CONF_KI, DEFAULT_KI),
-                kd=entry.options.get(CONF_KD, DEFAULT_KD),
-                floor_value=entry.options.get(CONF_FLOOR_VALUE, DEFAULT_FLOOR_VALUE),
-                off_threshold=entry.options.get(
-                    CONF_OFF_THRESHOLD, DEFAULT_OFF_THRESHOLD
-                ),
-                integral_max=entry.options.get(
-                    CONF_INTEGRAL_MAX, DEFAULT_INTEGRAL_MAX
-                ),
-                boost_threshold=entry.options.get(
-                    CONF_BOOST_THRESHOLD, DEFAULT_BOOST_THRESHOLD
-                ),
-                boost_value=entry.options.get(
-                    CONF_BOOST_VALUE, DEFAULT_BOOST_VALUE
-                ),
-            )
-        if data and "entity" in data:
-            entity: PIDVirtualThermostat = data["entity"]
-            entity._attr_min_temp = entry.options.get(CONF_MIN_TEMP, DEFAULT_MIN_TEMP)
-            entity._attr_max_temp = entry.options.get(CONF_MAX_TEMP, DEFAULT_MAX_TEMP)
-            entity.async_write_ha_state()
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set target temperature (called by Schedy)."""
         temp = kwargs.get(ATTR_TEMPERATURE)
         if temp is None:
             return
+        temp = max(self._attr_min_temp, min(self._attr_max_temp, float(temp)))
         self._attr_target_temperature = temp
         self.async_write_ha_state()
         # A numeric setpoint implies heating; make sure the real thermostat is
@@ -366,8 +439,11 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             _LOGGER.exception("Failed to sync HVAC mode to %s", entity_id)
 
     async def _async_recalculate_and_send(self) -> None:
-        """Run PID calculation and send valve position."""
+        """Run PID calculation and send valve position if it changed."""
         async with self._lock:
+            if self._sensor_is_stale():
+                self._mark_sensor_stale()
+                return
             current = self._attr_current_temperature
             if current is None:
                 return
@@ -381,7 +457,11 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             self._valve_position = valve
             self._update_hvac_action()
             self.async_write_ha_state()
-            await self._async_send_valve_position(valve)
+            # Only write when the value changed; the periodic refresh keeps
+            # the thermostat in external-control mode. Saves Zigbee traffic
+            # and TRV battery.
+            if valve != self._last_sent_valve:
+                await self._async_send_valve_position(valve)
 
     def _update_hvac_action(self) -> None:
         """Update hvac_action based on current state."""
@@ -401,6 +481,7 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
 
         state = self.hass.states.get(entity_id)
         if state is None or state.state in ("unavailable", "unknown"):
+            self._last_sent_valve = None
             _LOGGER.warning(
                 "Heating demand entity %s is not available, skipping valve write",
                 entity_id,
@@ -414,7 +495,9 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
                 {"entity_id": entity_id, "value": valve},
                 blocking=True,
             )
+            self._last_sent_valve = valve
         except Exception:
+            self._last_sent_valve = None
             _LOGGER.exception(
                 "Failed to set valve position on %s", entity_id
             )
@@ -429,6 +512,7 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             "pid_d": round(self._pid.last_d, 2),
             "floor_active": self._pid.last_floor_active,
             "heating_demand_entity": self._heating_demand_entity,
+            "sensor_stale": self._sensor_is_stale(),
             "kp": self._pid.kp,
             "ki": self._pid.ki,
             "kd": self._pid.kd,
@@ -440,6 +524,9 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             ),
             "pid_sample_interval_sec": self._entry.options.get(
                 CONF_PID_SAMPLE_INTERVAL, DEFAULT_PID_SAMPLE_INTERVAL
+            ),
+            "sensor_stale_timeout_min": self._entry.options.get(
+                CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT
             ),
             "sync_target_temperature": self._entry.options.get(
                 CONF_SYNC_TARGET_TEMP, DEFAULT_SYNC_TARGET_TEMP

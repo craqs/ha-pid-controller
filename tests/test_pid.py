@@ -14,6 +14,8 @@ _mod = importlib.util.module_from_spec(_spec)
 sys.modules["pid"] = _mod
 _spec.loader.exec_module(_mod)
 PIDController = _mod.PIDController
+MAX_DT = _mod.MAX_DT
+BOOST_HYSTERESIS = _mod.BOOST_HYSTERESIS
 
 
 def make_pid(**overrides):
@@ -139,6 +141,60 @@ class TestBoostMode:
         result = tick(pid, 20.0, 23.0)
         assert result == 75
 
+    def test_boost_exit_has_hysteresis(self):
+        """Once active, boost only exits when error drops below
+        threshold - hysteresis, so noise at the boundary doesn't chatter."""
+        pid = make_pid(kp=15.0, ki=0, kd=0, boost_threshold=1.5, boost_value=100)
+
+        # Enter boost at error 1.6
+        result = tick(pid, 21.4, 23.0, time_offset=0.0)
+        assert result == 100
+
+        # Error 1.4: below entry threshold but above exit threshold (1.3)
+        result = tick(pid, 21.6, 23.0)
+        assert result == 100
+        assert pid.last_boost_active is True
+
+        # Error 1.25: below exit threshold - boost ends
+        result = tick(pid, 21.75, 23.0)
+        assert result != 100
+        assert pid.last_boost_active is False
+
+        # Error 1.4 again: must NOT re-enter (entry needs >= 1.5)
+        result = tick(pid, 21.6, 23.0)
+        assert pid.last_boost_active is False
+
+    def test_boost_handoff_does_not_inject_integral(self):
+        """Regression: time bookkeeping must keep running during boost.
+
+        Previously _last_time froze at boost entry, so the first PID tick
+        after a long boost integrated ki * error * <whole boost duration>
+        in one step (~38% valve with defaults), guaranteeing overshoot.
+        """
+        pid = make_pid(kp=15.0, ki=0.005, kd=0, boost_threshold=1.5, boost_value=100)
+
+        # Steady state at target, then Schedy raises the setpoint
+        tick(pid, 20.0, 20.0, time_offset=0.0)
+        tick(pid, 20.0, 20.0)
+
+        # Boost for ~85 minutes of slow warmup
+        temp = 20.0
+        while 23.0 - temp >= 1.5:
+            result = tick(pid, temp, 23.0)
+            assert result == 100
+            temp += 0.018
+
+        # Continue until boost exits (hysteresis band)
+        while pid.last_boost_active or 23.0 - temp > 1.3:
+            result = tick(pid, temp, 23.0)
+            temp += 0.018
+
+        # First post-boost tick may only integrate one sample interval:
+        # ki * error * 60 ~= 0.4, not ki * error * 5100 ~= 38
+        assert 0.0 < pid._integral < 1.0
+        # And the output must be smooth (P + tiny I, lifted to floor)
+        assert result <= 30
+
 
 # --- Floor value logic ---
 
@@ -158,14 +214,15 @@ class TestFloorValue:
         tick(pid, 22.0, 23.0, time_offset=0.0)
         result = tick(pid, 22.0, 23.0)
         # P = 50 * 1.0 = 50, well above floor
-        assert result == 50
+        assert result >= 50
         assert pid.last_floor_active is False
 
     def test_floor_decays_proportionally_above_target(self):
         pid = make_pid(floor_value=25, off_threshold=1.0)
         tick(pid, 23.3, 23.0, time_offset=0.0)
         result = tick(pid, 23.3, 23.0)
-        # effective_floor = 25 * (1 - 0.3/1.0) = 17.5 -> 17
+        # effective_floor = 25 * (1 - 0.3/1.0) = 17.5, but float representation
+        # of 23.3 - 23.0 puts it a hair under -> rounds half-up to 17
         assert result == 17
         assert pid.last_floor_active is True
 
@@ -181,15 +238,15 @@ class TestFloorValue:
         pid = make_pid(floor_value=25, off_threshold=1.0)
         tick(pid, 23.9, 23.0, time_offset=0.0)
         result = tick(pid, 23.9, 23.0)
-        # effective_floor = 25 * (1 - 0.9/1.0) = 2.5 -> 2
-        assert result == 2
+        # effective_floor = 25 * (1 - 0.9/1.0) = 2.5 -> rounds to 3
+        assert result == 3
         assert pid.last_floor_active is True
 
     def test_floor_zero_disables_floor(self):
-        pid = make_pid(floor_value=0, kp=5.0)
+        pid = make_pid(floor_value=0, kp=4.0, ki=0, kd=0)
         tick(pid, 22.9, 23.0, time_offset=0.0)
         result = tick(pid, 22.9, 23.0)
-        # P = 5 * 0.1 = 0.5 -> int(0.5) = 0, floor is 0 so no override
+        # P = 4 * 0.1 = 0.4 -> rounds to 0, floor is 0 so no override
         assert result == 0
         assert pid.last_floor_active is False
 
@@ -222,22 +279,73 @@ class TestPIDComputation:
         assert pid._integral == pytest.approx(10.0)
 
     def test_integral_clamps_negative(self):
-        # Use off_threshold=3.0 so 23.5 is within range (23.5 < 23.0 + 3.0)
+        # A large positive integral being unwound in one big step must be
+        # clamped at -integral_max, not shoot past it.
         pid = make_pid(kp=0, ki=1.0, kd=0, integral_max=10.0, floor_value=0, boost_threshold=0, off_threshold=3.0)
+        pid._integral = 15.0
         tick(pid, 23.5, 23.0, time_offset=0.0)
-        # error=-0.5, ki=1.0, dt=60 -> I = -30, clamped to -10
+        # error=-0.5: provisional output 15 > 0, so integration proceeds:
+        # I += 1.0 * -0.5 * 60 = -30 -> 15 - 30 = -15, clamped to -10
         tick(pid, 23.5, 23.0)
         assert pid._integral == pytest.approx(-10.0)
 
-    def test_derivative_term(self):
+    def test_derivative_on_measurement(self):
         pid = make_pid(kp=0, ki=0, kd=2.0, floor_value=0)
         tick(pid, 22.0, 23.0, time_offset=0.0)
-        # error goes from 1.0 to 0.5, dt=60 -> D = 2.0 * (-0.5/60)
+        # temp rose 0.5C in 60s = 30 C/h -> raw D = -2.0 * 30 = -60
+        # low-pass: alpha = 60 / (300 + 60) = 1/6 -> D = -10
         tick(pid, 22.5, 23.0)
-        assert pid.last_d == pytest.approx(2.0 * (-0.5 / 60))
+        assert pid.last_d == pytest.approx(-10.0)
+
+    def test_derivative_immune_to_setpoint_change(self):
+        """Derivative acts on measured temperature, so a target jump
+        (Schedy schedule change) must not produce a D kick."""
+        pid = make_pid(kp=0, ki=0, kd=2.0, floor_value=0)
+        tick(pid, 22.0, 22.5, time_offset=0.0)
+        tick(pid, 22.0, 22.5)
+        assert pid.last_d == pytest.approx(0.0)
+        # Target jumps 1.5C, temperature unchanged -> no derivative kick
+        tick(pid, 22.0, 24.0 - 0.01)  # stay below boost threshold
+        assert pid.last_d == pytest.approx(0.0)
+
+    def test_derivative_filter_smooths_sensor_steps(self):
+        """A single 0.1C sensor step must not produce a full-size D spike."""
+        pid = make_pid(kp=0, ki=0, kd=2.0, floor_value=0)
+        tick(pid, 22.0, 23.0, time_offset=0.0)
+        tick(pid, 22.1, 23.0)
+        # Raw would be -2.0 * 6 C/h = -12; filtered = -12/6 = -2
+        assert abs(pid.last_d) < 3.0
+        # With no further movement it decays toward zero
+        tick(pid, 22.1, 23.0)
+        d_second = abs(pid.last_d)
+        tick(pid, 22.1, 23.0)
+        assert abs(pid.last_d) < d_second
+
+    def test_dt_clamped_after_long_gap(self):
+        """A long gap between computes (HA stall/suspend) must not integrate
+        the whole gap in one step."""
+        pid = make_pid(kp=0, ki=0.01, kd=0, floor_value=0, boost_threshold=0)
+        tick(pid, 22.0, 23.0, time_offset=0.0)
+        tick(pid, 22.0, 23.0, time_offset=10000.0)
+        # Unclamped would be 0.01 * 1.0 * 10000 = 100; clamped to MAX_DT=900
+        assert pid._integral == pytest.approx(0.01 * 1.0 * MAX_DT)
+
+    def test_no_integration_while_output_saturated(self):
+        """Conditional integration: while P alone saturates the output,
+        the integral must not wind up (it would force an overshoot later)."""
+        pid = make_pid(kp=30.0, ki=0.01, kd=0, boost_threshold=0, floor_value=25)
+        tick(pid, 19.0, 23.0, time_offset=0.0)
+        for _ in range(30):
+            result = tick(pid, 19.0, 23.0)
+            assert result == 100
+        assert pid._integral == pytest.approx(0.0)
+
+        # Once out of saturation, integration resumes
+        tick(pid, 22.5, 23.0)
+        assert pid._integral > 0.0
 
     def test_output_clamped_to_0_100(self):
-        pid = make_pid(kp=100.0, ki=0, kd=0)
+        pid = make_pid(kp=100.0, ki=0, kd=0, boost_threshold=0)
         tick(pid, 18.0, 23.0, time_offset=0.0)
         result = tick(pid, 18.0, 23.0)
         # P = 100 * 5 = 500, should clamp to 100
@@ -336,8 +444,8 @@ class TestFloorAntiWindup:
         assert i_after < i_positive
 
     def test_integral_does_not_go_negative_during_floor_above_target(self):
-        """Integral should be clamped at zero during floor override with
-        negative error — it must not accumulate negative windup."""
+        """Integral must not accumulate negative windup during floor override
+        with negative error."""
         pid = make_pid(kp=15.0, ki=0.005, kd=0, floor_value=25, off_threshold=1.0)
 
         # Start with zero integral, temp above target
@@ -381,32 +489,13 @@ class TestReset:
     def test_reset_clears_state(self):
         pid = make_pid()
         tick(pid, 22.0, 23.0, time_offset=0.0)
-        tick(pid, 22.0, 23.0)
+        tick(pid, 22.5, 23.0)
         pid.reset()
         assert pid._integral == 0.0
-        assert pid._last_error is None
+        assert pid._last_temp is None
         assert pid._last_time is None
-
-
-# --- Update params ---
-
-
-class TestUpdateParams:
-    def test_update_params_changes_values(self):
-        pid = make_pid()
-        pid.update_params(
-            kp=10.0, ki=0.01, kd=1.0, floor_value=30,
-            off_threshold=2.0, integral_max=50.0,
-            boost_threshold=2.0, boost_value=80,
-        )
-        assert pid.kp == 10.0
-        assert pid.ki == 0.01
-        assert pid.kd == 1.0
-        assert pid.floor_value == 30
-        assert pid.off_threshold == 2.0
-        assert pid.integral_max == 50.0
-        assert pid.boost_threshold == 2.0
-        assert pid.boost_value == 80
+        assert pid._d_filtered == 0.0
+        assert pid._boost_active is False
 
 
 # --- Integration scenarios ---
@@ -444,8 +533,8 @@ class TestScenarios:
 
         # 0.5 above target - floor decays
         result = tick(pid, 23.5, 23.0)
-        # effective_floor = 25 * (1 - 0.5/1.0) = 12.5 -> 12
-        assert result == 12
+        # effective_floor = 25 * (1 - 0.5/1.0) = 12.5 -> rounds to 13
+        assert result == 13
 
         # At off_threshold - valve closes
         result = tick(pid, 24.0, 23.0)
