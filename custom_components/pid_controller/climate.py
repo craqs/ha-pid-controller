@@ -191,13 +191,15 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             and thermostat_state.state != "unavailable"
         )
 
-        # Read initial temperature
+        # Read initial temperature. The source entity may not have loaded yet
+        # (startup ordering); start the stale clock either way so a restart
+        # gets a full grace window instead of tripping the failsafe at once.
         temp = self._read_temperature(
             self.hass.states.get(self._temperature_entity)
         )
         if temp is not None:
             self._attr_current_temperature = temp
-            self._last_temp_update = time.monotonic()
+        self._last_temp_update = time.monotonic()
 
     async def async_will_remove_from_hass(self) -> None:
         """Clean up listeners."""
@@ -222,16 +224,19 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             return None
 
     def _sensor_is_stale(self) -> bool:
-        """Return True if the temperature source stopped reporting."""
+        """Return True if the temperature source stopped reporting.
+
+        A missing reading alone is not "stale" — right after startup the
+        source may simply not have reported yet (writes are paused separately
+        while there is no reading). Stale means the timeout elapsed without
+        a fresh report.
+        """
         timeout_min = self._entry.options.get(
             CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT
         )
         if not timeout_min:
             return False
-        if (
-            self._attr_current_temperature is None
-            or self._last_temp_update is None
-        ):
+        if self._last_temp_update is None:
             return True
         return time.monotonic() - self._last_temp_update > timeout_min * 60
 
@@ -289,7 +294,7 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             return
         if self._attr_hvac_mode != HVACMode.HEAT:
             return
-        if self._sensor_is_stale():
+        if self._sensor_is_stale() or self._attr_current_temperature is None:
             # Deliberately ceding control to the built-in fallback.
             return
         try:
@@ -330,6 +335,10 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
         async with self._lock:
             if self._sensor_is_stale():
                 self._mark_sensor_stale()
+                return
+            # No reading yet (e.g. right after startup): don't assert a valve
+            # position that wasn't computed from a real temperature.
+            if self._attr_current_temperature is None:
                 return
             await self._async_send_valve_position(self._valve_position)
 
