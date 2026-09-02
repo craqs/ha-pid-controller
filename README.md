@@ -10,14 +10,14 @@ Many radiator thermostats (e.g., Bosch BTH-RA) have built-in PID controllers tha
 
 This integration creates virtual climate entities that:
 - Accept target temperature from schedulers like [Schedy](https://hass-apps.readthedocs.io/en/stable/apps/schedy/)
-- Run a custom PID algorithm with a **floor value** — a configurable minimum valve opening (e.g., 25%)
+- Run a custom PID algorithm with a **floor value** - a configurable minimum valve opening (e.g., 25%)
 - Directly control the radiator valve via the thermostat's PI heating demand entity
 - Periodically refresh the valve position to prevent the built-in PID from taking over
 
 ### Floor Value Logic
 
 - When heating is needed and the room is at or below the target, the valve never drops below the floor value (default 25%)
-- Between the target and `target + off_threshold`, the floor **decays proportionally** — e.g., at 0.3°C above target with off_threshold=1.0, the effective floor is `25% × (1 - 0.3/1.0) = 17%`
+- Between the target and `target + off_threshold`, the floor **decays proportionally** - e.g., at 0.3°C above target with off_threshold=1.0, the effective floor is `25% × (1 - 0.3/1.0) = 17%`
 - The valve only closes to 0% when the room temperature exceeds the target by the off threshold (default 1°C)
 - This keeps a gentle flow of warm water through the radiator, preventing the "cold feeling"
 
@@ -29,7 +29,7 @@ Boost exits with a small hysteresis (0.2°C below the entry threshold) so sensor
 
 ### Safety & Robustness
 
-- **Sensor stale failsafe**: If the temperature source stops reporting (dead battery, Zigbee dropout), the integration pauses valve writes so the thermostat's built-in controller can take over as a fallback — instead of heating forever on a frozen reading.
+- **Sensor stale failsafe**: If the temperature source stops reporting (dead battery, Zigbee dropout), the integration pauses valve writes so the thermostat's built-in controller can take over as a fallback - instead of heating forever on a frozen reading.
 - **Takeover detection**: The integration watches the heating demand entity; if the built-in PID overwrites the valve position, it re-asserts its value immediately instead of waiting for the next periodic refresh.
 - **Minimal Zigbee traffic**: Valve positions are only written when they change; the periodic refresh alone keeps the thermostat in external-control mode. This saves TRV battery.
 
@@ -59,9 +59,9 @@ Copy the `custom_components/pid_controller` directory to your Home Assistant's `
 3. Configure:
    - **Name**: Friendly name for the virtual thermostat
    - **Temperature source entity**: Sensor or climate entity providing current room temperature
-   - **Real thermostat entity**: Your Zigbee thermostat — the PI heating demand entity is auto-detected from the same device (if auto-detection fails, you can pick the number entity manually)
+   - **Real thermostat entity**: Your Zigbee thermostat - the PI heating demand entity is auto-detected from the same device (if auto-detection fails, you can pick the number entity manually)
 
-To change these entities later, use **Reconfigure** on the integration entry — no need to delete and re-add.
+To change these entities later, use **Reconfigure** on the integration entry - no need to delete and re-add.
 
 ### PID Tuning
 
@@ -98,7 +98,7 @@ This section explains every tunable parameter, what it does, and how to adjust i
 
 ### Understanding the PID Algorithm
 
-A PID controller continuously calculates an **error** — the difference between where you want the temperature to be (target) and where it actually is (current):
+A PID controller continuously calculates an **error** - the difference between where you want the temperature to be (target) and where it actually is (current):
 
 ```
 error = target_temperature - current_temperature
@@ -116,28 +116,28 @@ Each term serves a different purpose:
 - **I (Integral)**: Reacts to *accumulated* error over time. If the room has been slightly too cold for a long time, this term slowly increases the valve opening to compensate.
 - **D (Derivative)**: Reacts to *how fast the measured temperature is changing*. If the temperature is rising quickly toward the target, this term reduces the valve opening to prevent overshooting. It acts on the temperature (not the error), so target changes from Schedy don't cause derivative kicks, and it is low-pass filtered (~5 min time constant) so sensor noise doesn't make the valve jitter.
 
-On top of the standard PID, this integration adds **floor value logic** and an **off threshold** — explained below — which are the key features that prevent the "cold feeling" problem.
+On top of the standard PID, this integration adds **floor value logic** and an **off threshold** - explained below - which are the key features that prevent the "cold feeling" problem.
 
 ### Parameter Reference
 
 | Parameter | Default | Range | Unit |
 |---|---|---|---|
-| Kp (Proportional gain) | 15.0 | 0–100 | %/°C |
-| Ki (Integral gain) | 0.005 | 0–1 | %/(°C·s) |
-| Kd (Derivative gain) | 2.0 | 0–100 | % per °C/h |
-| Floor value | 25 | 0–100 | % |
-| Off threshold | 1.0 | 0–5 | °C |
-| Valve refresh interval | 15 | 5–60 | minutes |
-| PID calculation interval | 60 | 10–300 | seconds |
-| Min temperature | 5.0 | 0–15 | °C |
-| Max temperature | 30.0 | 15–40 | °C |
-| Integral anti-windup limit | 100.0 | 10–500 | — |
-| Boost threshold | 1.5 | 0–10 | °C |
-| Boost valve opening | 100 | 0–100 | % |
-| Sensor stale timeout | 60 | 0–360 | minutes |
-| Sync target temperature | On | On/Off | — |
+| Kp (Proportional gain) | 15.0 | 0-100 | %/°C |
+| Ki (Integral gain) | 0.005 | 0-1 | %/(°C·s) |
+| Kd (Derivative gain) | 2.0 | 0-100 | % per °C/h |
+| Floor value | 25 | 0-100 | % |
+| Off threshold | 1.0 | 0-5 | °C |
+| Valve refresh interval | 15 | 5-60 | minutes |
+| PID calculation interval | 60 | 10-300 | seconds |
+| Min temperature | 5.0 | 0-15 | °C |
+| Max temperature | 30.0 | 15-40 | °C |
+| Integral anti-windup limit | 100.0 | 10-500 | - |
+| Boost threshold | 1.5 | 0-10 | °C |
+| Boost valve opening | 100 | 0-100 | % |
+| Sensor stale timeout | 60 | 0-360 | minutes |
+| Sync target temperature | On | On/Off | - |
 
-### Kp — Proportional Gain
+### Kp - Proportional Gain
 
 **What it does**: Multiplies the current error to produce the proportional term: `P = Kp × error`.
 
@@ -148,19 +148,19 @@ On top of the standard PID, this integration adds **floor value logic** and an *
 - **Too high** (e.g., 50): The valve reacts too aggressively to small temperature differences. You'll see the valve jumping between wide open and the floor value. Temperature may oscillate around the setpoint.
 - **Start here**: Leave at 15. If the room takes too long to warm up after a setpoint change, increase by 5. If you see the valve constantly swinging between high and low values, decrease by 5.
 
-### Ki — Integral Gain
+### Ki - Integral Gain
 
-**What it does**: Accumulates error over time: `I += Ki × error × dt`. This eliminates *steady-state error* — the situation where the proportional term alone can't get the temperature exactly to the target.
+**What it does**: Accumulates error over time: `I += Ki × error × dt`. This eliminates *steady-state error* - the situation where the proportional term alone can't get the temperature exactly to the target.
 
 **Example**: If the room is consistently 0.3°C below target, the integral term slowly builds up over minutes/hours, gradually increasing the valve opening until the temperature reaches the exact target.
 
 **How to tune**:
-- **Too low** (e.g., 0.001): The system is very slow to correct small persistent offsets. The room might settle 0.2–0.5°C below target.
+- **Too low** (e.g., 0.001): The system is very slow to correct small persistent offsets. The room might settle 0.2-0.5°C below target.
 - **Too high** (e.g., 0.05): The integral accumulates too quickly, causing the temperature to overshoot the target, then undershoot, then overshoot again (oscillation). This is the most common PID tuning mistake.
-- **Start here**: Leave at 0.005. If the room consistently settles slightly below target (check over 1–2 hours), double it to 0.01. If you see slow temperature oscillations (period of 30+ minutes), halve it.
-- **Note**: The integral is reset to zero whenever the temperature exceeds `target + off_threshold` or when HVAC mode is set to OFF. It also doesn't accumulate while the output is already saturated (0% or 100%) in the direction of the error — so long warmups don't wind it up — and it's protected against negative windup while the floor value is holding the valve open above target.
+- **Start here**: Leave at 0.005. If the room consistently settles slightly below target (check over 1-2 hours), double it to 0.01. If you see slow temperature oscillations (period of 30+ minutes), halve it.
+- **Note**: The integral is reset to zero whenever the temperature exceeds `target + off_threshold` or when HVAC mode is set to OFF. It also doesn't accumulate while the output is already saturated (0% or 100%) in the direction of the error - so long warmups don't wind it up - and it's protected against negative windup while the floor value is holding the valve open above target.
 
-### Kd — Derivative Gain
+### Kd - Derivative Gain
 
 **What it does**: Brakes on the temperature slope: `D = -Kd × (temperature change in °C per hour)`. When the room is warming quickly, this produces a negative contribution that closes the valve early to prevent overshoot.
 
@@ -173,10 +173,10 @@ Two implementation details matter here:
 **How to tune**:
 - **Too low** (e.g., 0): No braking effect. Temperature may overshoot the target, especially in well-insulated rooms where heat builds up.
 - **Too high** (e.g., 50): The controller closes the valve hard during normal warmup, making heating sluggish.
-- **Start here**: Leave at 2 for gentle braking. If you see overshooting (temperature goes 0.5°C+ above target before settling), increase to 5–10. If warmup near the target feels too slow, decrease.
+- **Start here**: Leave at 2 for gentle braking. If you see overshooting (temperature goes 0.5°C+ above target before settling), increase to 5-10. If warmup near the target feels too slow, decrease.
 - **Tip**: Radiator heating has very long time constants. The derivative term is the least important of the three for this application. When in doubt, reduce it.
 
-### Floor Value — Minimum Valve Opening
+### Floor Value - Minimum Valve Opening
 
 **What it does**: When the PID calculates a valve position that is greater than 0% but less than the floor value, the floor value is used instead. Also, when the current temperature is below the target but the PID output is 0 (e.g., due to a large derivative term), the floor value is applied.
 
@@ -198,10 +198,10 @@ For example, with floor_value=25, off_threshold=1.0, and the room 0.3°C above t
 **How to tune**:
 - **Too low** (e.g., 10%): You might still feel cold near the radiator because the water flow is too low to keep the radiator noticeably warm.
 - **Too high** (e.g., 50%): The room may overshoot the target temperature because the minimum heat output is substantial. You'll rely more on the off threshold to eventually close the valve.
-- **Start here**: 25% is a good starting point for typical European radiator systems. If your wife still feels cold near the radiator, increase to 30–35%. If the room frequently overshoots the target, decrease to 20%.
+- **Start here**: 25% is a good starting point for typical European radiator systems. If your wife still feels cold near the radiator, increase to 30-35%. If the room frequently overshoots the target, decrease to 20%.
 - **Tip**: You can check if the floor is active by looking at the `floor_active` attribute on the virtual thermostat entity in HA Developer Tools → States.
 
-### Off Threshold — When to Fully Close the Valve
+### Off Threshold - When to Fully Close the Valve
 
 **What it does**: The valve is only allowed to close to 0% when: `current_temperature >= target_temperature + off_threshold`. Until this condition is met, the valve stays at least at the floor value.
 
@@ -217,10 +217,10 @@ For example, with floor_value=25, off_threshold=1.0, and the room 0.3°C above t
 - Room at 23.0°C → valve closes to 0%, heating stops completely
 
 **How to tune**:
-- **Too low** (e.g., 0.2°C): The valve will close to 0% almost as soon as the target is reached. You're back to the same problem as the built-in PID — frequent on/off cycling.
+- **Too low** (e.g., 0.2°C): The valve will close to 0% almost as soon as the target is reached. You're back to the same problem as the built-in PID - frequent on/off cycling.
 - **Too high** (e.g., 3°C): The valve stays open long after the room is warm enough. The room consistently overshoots by several degrees before the valve closes. Wasted energy.
 - **Start here**: 1.0°C. If the room still cycles uncomfortably (valve frequently goes 0% → floor → 0%), increase to 1.5°C. If the room gets too warm before the valve closes, decrease to 0.5°C.
-- **Tip**: In rooms with poor insulation (temperature drops quickly when heating stops), use a higher threshold (1.5–2.0°C) to keep the valve open longer.
+- **Tip**: In rooms with poor insulation (temperature drops quickly when heating stops), use a higher threshold (1.5-2.0°C) to keep the valve open longer.
 
 ### Valve Refresh Interval
 
@@ -229,8 +229,8 @@ For example, with floor_value=25, off_threshold=1.0, and the room 0.3°C above t
 **How to tune**:
 - The BTH-RA typically requires a command every ~20 minutes. The default of 15 minutes provides a safety margin.
 - Takeover is also detected event-driven: if the heating demand entity reports a value the integration didn't command, it re-asserts its position immediately (rate-limited to once a minute). The periodic refresh is the belt-and-suspenders backup.
-- **If you want to reduce Zigbee traffic**, increase to 18–20 minutes, but don't exceed 20 for BTH-RA.
-- This is independent of the PID calculation interval — it's purely about keeping the thermostat in "external control" mode.
+- **If you want to reduce Zigbee traffic**, increase to 18-20 minutes, but don't exceed 20 for BTH-RA.
+- This is independent of the PID calculation interval - it's purely about keeping the thermostat in "external control" mode.
 
 ### PID Calculation Interval
 
@@ -240,7 +240,7 @@ For example, with floor_value=25, off_threshold=1.0, and the room 0.3°C above t
 - **60 seconds (default)**: Good balance. Room temperature changes slowly, so more frequent calculations don't improve comfort.
 - A Zigbee command is only sent when the computed valve position actually **changes**, so a short interval doesn't flood the network while the room is stable.
 - **Decrease to 30s**: If you want faster response to temperature changes.
-- **Increase to 120–300s**: If you have many thermostats and want to minimize computation. Response is slower but for a stable room this is fine.
+- **Increase to 120-300s**: If you have many thermostats and want to minimize computation. Response is slower but for a stable room this is fine.
 - **Tip**: The PID also recalculates immediately when Schedy changes the target temperature, regardless of this interval.
 
 ### Min/Max Temperature
@@ -250,7 +250,7 @@ For example, with floor_value=25, off_threshold=1.0, and the room 0.3°C above t
 - **Min temperature** (default 5°C): The lowest target temperature that can be set. Typically used for frost protection.
 - **Max temperature** (default 30°C): The highest target temperature that can be set.
 
-These don't affect the PID algorithm itself — they only constrain the `set_temperature` service call.
+These don't affect the PID algorithm itself - they only constrain the `set_temperature` service call.
 
 ### Integral Anti-Windup Limit
 
@@ -259,7 +259,7 @@ These don't affect the PID algorithm itself — they only constrain the `set_tem
 **Example**: Without anti-windup, if the room is 3°C below target for 2 hours, the integral might accumulate to 500+. When the temperature finally approaches the target, the integral "memory" keeps the valve wide open, causing massive overshoot. The anti-windup limit prevents this.
 
 **How to tune**:
-- **100 (default)**: The integral term can contribute up to 100% valve opening on its own. For most setups this is fine — the clamp rarely activates because the integral gain (Ki) is small.
+- **100 (default)**: The integral term can contribute up to 100% valve opening on its own. For most setups this is fine - the clamp rarely activates because the integral gain (Ki) is small.
 - **Decrease to 50**: If you see large temperature overshoots after extended heating-up periods. This limits how much "history" the integral can accumulate.
 - **Increase to 200**: If the system struggles to reach the target and you've already increased Ki. A higher limit allows the integral to compensate for larger persistent errors.
 - **Note**: The integral is also reset when the temperature crosses the off threshold, which naturally prevents windup in normal operation.
@@ -267,11 +267,11 @@ These don't affect the PID algorithm itself — they only constrain the `set_tem
 - **Floor anti-windup**: When the floor value is overriding the PID output above target, the integral is prevented from accumulating negative. Without this, the integral would build up a large negative value while the floor keeps the valve open, causing very slow recovery when heating is needed again.
 - **Time-step clamp**: A single PID step never integrates more than 15 minutes of error, so gaps between calculations (HA restarts, stalls, long boost phases) can't inject a large integral jump.
 
-### Boost Threshold — Fast Warmup Trigger
+### Boost Threshold - Fast Warmup Trigger
 
 **What it does**: When the room temperature is this many degrees below the target, the valve is forced to the boost value (default 100%) for rapid warmup. Normal PID control resumes once the temperature gets closer to the target.
 
-**Example**: With boost_threshold=1.5 and target=23°C, if the room is at 21°C (2°C below target), the valve goes straight to 100%. When the room warms to 21.7°C (1.3°C below — the threshold minus a 0.2°C exit hysteresis), boost deactivates and PID takes over. The hysteresis prevents the valve from chattering between 100% and the PID output when the temperature hovers right at the threshold.
+**Example**: With boost_threshold=1.5 and target=23°C, if the room is at 21°C (2°C below target), the valve goes straight to 100%. When the room warms to 21.7°C (1.3°C below - the threshold minus a 0.2°C exit hysteresis), boost deactivates and PID takes over. The hysteresis prevents the valve from chattering between 100% and the PID output when the temperature hovers right at the threshold.
 
 **How to tune**:
 - **Too low** (e.g., 0.5°C): Boost activates too often, even for small setpoint changes. The valve slams to 100% when it's not really needed.
@@ -285,35 +285,35 @@ These don't affect the PID algorithm itself — they only constrain the `set_tem
 
 **How to tune**:
 - **100% (default)**: Maximum heat output during warmup. Best for getting the room to temperature quickly.
-- **Decrease to 70–80%**: If 100% causes the radiator to make noise (some radiators click or hiss at full flow) or if you want a slightly gentler warmup.
+- **Decrease to 70-80%**: If 100% causes the radiator to make noise (some radiators click or hiss at full flow) or if you want a slightly gentler warmup.
 - **Tip**: Check the `boost_active` attribute on the virtual thermostat to see when boost is engaged.
 
-### Sensor Stale Timeout — Failsafe
+### Sensor Stale Timeout - Failsafe
 
-**What it does**: If the temperature source doesn't deliver a new reading for this many minutes (dead battery, Zigbee dropout, sensor removed), the integration stops writing valve positions. Without fresh commands, the real thermostat's built-in controller takes over after its own timeout (~20 minutes on the BTH-RA) and regulates using its internal sensor and the synced target temperature — a safe fallback instead of heating forever on a frozen reading.
+**What it does**: If the temperature source doesn't deliver a new reading for this many minutes (dead battery, Zigbee dropout, sensor removed), the integration stops writing valve positions. Without fresh commands, the real thermostat's built-in controller takes over after its own timeout (~20 minutes on the BTH-RA) and regulates using its internal sensor and the synced target temperature - a safe fallback instead of heating forever on a frozen reading.
 
 A warning is logged when the failsafe engages and an info message when the sensor recovers; the `sensor_stale` attribute on the virtual thermostat shows the current state. Control resumes automatically on the first fresh reading.
 
 **How to tune**:
 - **60 minutes (default)**: Safely above the reporting heartbeat of typical Zigbee temperature sensors (Xiaomi/Aqara report at least every ~50 minutes).
-- **Decrease to 20–30 min**: If your sensor reports frequently and you want a faster failsafe.
-- **Set to 0**: Disables the failsafe (previous behavior — not recommended).
+- **Decrease to 20-30 min**: If your sensor reports frequently and you want a faster failsafe.
+- **Set to 0**: Disables the failsafe (previous behavior - not recommended).
 - **Tip**: This works best with **Sync target temperature** enabled, so the built-in fallback regulates toward the right setpoint.
 
 ### Sync Target Temperature
 
-**What it does**: When enabled, the target temperature set on the virtual thermostat is also sent to the real thermostat via the `climate.set_temperature` service. This is purely informational for the real thermostat — the custom PID still controls the valve directly via the heating demand entity.
+**What it does**: When enabled, the target temperature set on the virtual thermostat is also sent to the real thermostat via the `climate.set_temperature` service. This is purely informational for the real thermostat - the custom PID still controls the valve directly via the heating demand entity.
 
 **Why it matters**:
 - **Display**: The real thermostat's screen shows the correct target temperature instead of a stale value.
 - **Fallback safety**: If the integration stops sending valve commands (e.g., HA crashes), the real thermostat's built-in PID has a reasonable target to fall back on.
 - **Default**: Enabled. There's rarely a reason to disable this unless you have a specific reason to keep the real thermostat's target independent.
 
-### Tuning Workflow — Step by Step
+### Tuning Workflow - Step by Step
 
 If you're starting from scratch, follow this sequence:
 
-1. **Start with defaults.** Set target temperature and observe for 1–2 hours.
+1. **Start with defaults.** Set target temperature and observe for 1-2 hours.
 
 2. **Check the debug attributes** in Developer Tools → States:
    - `valve_position`: Is it changing or stuck?
@@ -321,7 +321,7 @@ If you're starting from scratch, follow this sequence:
    - `floor_active`: Is the floor value being used frequently?
 
 3. **Tune floor_value and off_threshold first.** These are the comfort parameters unique to this integration. Get these right before touching Kp/Ki/Kd:
-   - If someone still feels cold → increase floor_value (try 30–35%)
+   - If someone still feels cold → increase floor_value (try 30-35%)
    - If the room overshoots → decrease off_threshold or floor_value
    - If the valve cycles between 0% and floor_value frequently → increase off_threshold
 
@@ -330,7 +330,7 @@ If you're starting from scratch, follow this sequence:
    - If too sluggish, increase Kp by 5
    - If too aggressive, decrease Kp by 5
 
-5. **Then tune Ki.** Set the target and wait 1–2 hours:
+5. **Then tune Ki.** Set the target and wait 1-2 hours:
    - If temperature settles 0.3°C+ below target, double Ki
    - If temperature slowly oscillates (30+ min cycles), halve Ki
 
@@ -371,7 +371,7 @@ Boost threshold: 0 (disabled)
 The virtual thermostat exposes extra state attributes in Developer Tools → States:
 
 **PID output:**
-- `valve_position`: Current valve opening percentage (0–100)
+- `valve_position`: Current valve opening percentage (0-100)
 - `pid_p`, `pid_i`, `pid_d`: Individual PID component values
 - `floor_active`: Whether the floor value is currently overriding the PID output
 - `boost_active`: Whether boost mode is currently engaged
