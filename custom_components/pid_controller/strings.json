@@ -51,6 +51,7 @@
           "ki": "Integral gain (Ki)",
           "kd": "Derivative gain (Kd)",
           "floor_value": "Floor valve opening (%)",
+          "min_valve_opening": "Minimum effective valve opening (%)",
           "off_threshold": "Off threshold (°C above target)",
           "update_interval": "Valve refresh interval (minutes)",
           "pid_sample_interval": "PID calculation interval (seconds)",
@@ -65,6 +66,7 @@
         "data_description": {
           "kd": "Braking on temperature slope, in % valve per °C/hour of change. Acts on the measured temperature (no setpoint kick) and is low-pass filtered.",
           "floor_value": "Minimum valve opening percentage when heating is needed. Prevents the valve from closing completely.",
+          "min_valve_opening": "The opening at which your valve starts to pass water. Positions below it move the motor without heating, so they are never sent: above target they become 0, at or below target they are raised to this value. Set it at or below your floor value. 0 disables.",
           "off_threshold": "Degrees above target temperature before the valve fully closes to 0%.",
           "update_interval": "How often to re-send the valve position to prevent the built-in PID from taking over.",
           "pid_sample_interval": "How often the PID algorithm recalculates the valve position. Writes are only sent when the value changes.",

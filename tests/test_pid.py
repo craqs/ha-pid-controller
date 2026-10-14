@@ -482,6 +482,57 @@ class TestFloorAntiWindup:
         assert pid.last_floor_active is False  # PID now exceeds floor
 
 
+# --- Minimum effective opening ---
+
+
+class TestMinOpening:
+    def test_disabled_by_default(self):
+        pid = make_pid(floor_value=25, ki=0, kd=0)
+        tick(pid, 23.5, 23.0, time_offset=0.0)
+        # Floor decay below any cut-off is still sent: 25 * 0.5 = 12.5 -> 13
+        assert tick(pid, 23.5, 23.0) == 13
+
+    def test_decayed_floor_below_min_is_cut_to_zero(self):
+        pid = make_pid(floor_value=25, min_opening=17, ki=0, kd=0)
+        tick(pid, 23.5, 23.0, time_offset=0.0)
+        assert tick(pid, 23.5, 23.0) == 0
+        assert pid.last_min_opening_cut is True
+        assert pid.last_floor_active is False
+
+    def test_decayed_floor_above_min_is_kept(self):
+        pid = make_pid(floor_value=25, min_opening=17, ki=0, kd=0)
+        tick(pid, 23.15, 23.0, time_offset=0.0)
+        # 25 * (1 - 0.15) = 21.25 -> 21, clears min + hysteresis from closed
+        assert tick(pid, 23.15, 23.0) == 21
+        assert pid.last_min_opening_cut is False
+
+    def test_hysteresis_after_cut(self):
+        pid = make_pid(floor_value=25, min_opening=17, ki=0, kd=0)
+        tick(pid, 22.9, 23.0, time_offset=0.0)
+        assert tick(pid, 22.9, 23.0) == 25  # below target: floor
+        assert tick(pid, 23.3, 23.0) == 17  # decaying, still at min
+        assert tick(pid, 23.36, 23.0) == 0  # 16 -> cut
+        assert tick(pid, 23.28, 23.0) == 0  # 18: open again only at min + 3
+        assert tick(pid, 23.16, 23.0) == 21  # 21 >= 20: reopens
+
+    def test_small_request_at_or_below_target_raised_to_min(self):
+        pid = make_pid(floor_value=0, min_opening=17, kp=15.0, ki=0, kd=0)
+        tick(pid, 22.9, 23.0, time_offset=0.0)
+        # P = 1.5 -> 2 would not pass water; heat was asked for, so open to 17
+        assert tick(pid, 22.9, 23.0) == 17
+
+    def test_zero_stays_zero(self):
+        pid = make_pid(floor_value=0, min_opening=17, kp=15.0, ki=0, kd=0)
+        tick(pid, 23.0, 23.0, time_offset=0.0)
+        assert tick(pid, 23.0, 23.0) == 0
+        assert tick(pid, 22.0, 23.0, is_heating=False) == 0
+
+    def test_boost_unaffected(self):
+        pid = make_pid(min_opening=17)
+        tick(pid, 21.0, 23.0, time_offset=0.0)
+        assert tick(pid, 21.0, 23.0) == 100
+
+
 # --- Reset ---
 
 

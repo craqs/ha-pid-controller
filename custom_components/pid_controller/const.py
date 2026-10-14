@@ -38,3 +38,5 @@ CONF_BOOST_VALUE = "boost_value"
 DEFAULT_BOOST_VALUE = 100  # valve % during boost
 CONF_STALE_TIMEOUT = "sensor_stale_timeout"
 DEFAULT_STALE_TIMEOUT = 60  # minutes without a temperature update before failsafe; 0 disables
+CONF_MIN_VALVE_OPENING = "min_valve_opening"
+DEFAULT_MIN_VALVE_OPENING = 0  # % below which the valve passes no water; 0 disables

@@ -17,6 +17,11 @@ BOOST_HYSTERESIS = 0.2
 # usefully-sized kd.
 D_FILTER_TAU = 300.0
 
+# A valve closed by the minimum-opening cut reopens above target only once
+# the computed position clears min_opening by this many percent, so sensor
+# noise at the cut-off doesn't toggle the valve between closed and open.
+MIN_OPENING_HYSTERESIS = 3
+
 
 def _pct(value: float) -> int:
     """Round a non-negative valve percentage to int, half-up."""
@@ -36,6 +41,7 @@ class PIDController:
         integral_max: float,
         boost_threshold: float,
         boost_value: int,
+        min_opening: int = 0,
     ) -> None:
         """Initialize PID controller."""
         self.kp = kp
@@ -46,12 +52,14 @@ class PIDController:
         self.integral_max = integral_max
         self.boost_threshold = boost_threshold
         self.boost_value = boost_value
+        self.min_opening = min_opening
 
         self._integral: float = 0.0
         self._last_temp: float | None = None
         self._last_time: float | None = None
         self._d_filtered: float = 0.0
         self._boost_active: bool = False
+        self._last_output: int = 0
 
         # Last computed components for debugging
         self.last_p: float = 0.0
@@ -59,6 +67,7 @@ class PIDController:
         self.last_d: float = 0.0
         self.last_floor_active: bool = False
         self.last_boost_active: bool = False
+        self.last_min_opening_cut: bool = False
 
     def reset(self) -> None:
         """Reset PID state."""
@@ -67,6 +76,7 @@ class PIDController:
         self._last_time = None
         self._d_filtered = 0.0
         self._boost_active = False
+        self._last_output = 0
 
     def compute(
         self,
@@ -84,6 +94,39 @@ class PIDController:
         Returns:
             Valve position as integer 0-100.
         """
+        output = self._compute(current_temp, target_temp, is_heating)
+        self.last_min_opening_cut = False
+        if output > 0 and self.min_opening > 0 and target_temp is not None:
+            output = self._apply_min_opening(output, current_temp <= target_temp)
+        self._last_output = output
+        return output
+
+    def _apply_min_opening(self, output: int, at_or_below_target: bool) -> int:
+        """Never command a position the valve can't pass water at.
+
+        Below min_opening the valve motor moves but no water flows, so such
+        positions only drain the battery. At or below target the request is
+        raised to min_opening (heat was asked for); above target it drops to
+        0, with hysteresis so the valve doesn't toggle at the cut-off.
+        """
+        if at_or_below_target:
+            return max(output, _pct(self.min_opening))
+        reopen_at = self.min_opening
+        if self._last_output == 0:
+            reopen_at += MIN_OPENING_HYSTERESIS
+        if output >= reopen_at:
+            return output
+        self.last_floor_active = False
+        self.last_min_opening_cut = True
+        return 0
+
+    def _compute(
+        self,
+        current_temp: float,
+        target_temp: float | None,
+        is_heating: bool,
+    ) -> int:
+        """Compute the PID/floor/boost valve position, before the minimum-opening cut."""
         self.last_floor_active = False
         self.last_boost_active = False
 
