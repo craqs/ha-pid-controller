@@ -526,6 +526,8 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             "ki": self._pid.ki,
             "kd": self._pid.kd,
             "floor_value": self._pid.floor_value,
+            "min_valve_opening": self._pid.min_opening,
+            "min_opening_cut": self._pid.last_min_opening_cut,
             "off_threshold": self._pid.off_threshold,
             "integral_max": self._pid.integral_max,
             "update_interval_min": self._entry.options.get(

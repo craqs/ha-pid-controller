@@ -21,6 +21,10 @@ This integration creates virtual climate entities that:
 - The valve only closes to 0% when the room temperature exceeds the target by the off threshold (default 1°C)
 - This keeps a gentle flow of warm water through the radiator, preventing the "cold feeling"
 
+### Minimum Effective Opening
+
+Most radiator valves pass no water at all in the bottom part of their range - a Bosch BTH-RA measured with a heat meter passed nothing below ~16% and only started flowing at 17-21%. Positions in that dead zone move the valve motor (battery) without heating anything. Set **Minimum effective valve opening** to where your valve starts to flow and the integration never sends such a position: above target a request below it becomes 0%, at or below target it is raised to the minimum. A closed valve reopens above target only once the request clears the minimum by 3%, so sensor noise at the cut-off doesn't toggle it. Disabled (0) by default.
+
 ### Boost Mode
 
 When the room is significantly below the target temperature (by default 1.5°C or more), the valve is forced to 100% to warm up the room as quickly as possible. Once the temperature gets closer to the target, normal PID control takes over. Boost can be disabled by setting the threshold to 0.
@@ -127,6 +131,7 @@ On top of the standard PID, this integration adds **floor value logic** and an *
 | Kd (Derivative gain) | 2.0 | 0-100 | % per °C/h |
 | Floor value | 25 | 0-100 | % |
 | Off threshold | 1.0 | 0-5 | °C |
+| Minimum effective valve opening | 0 (off) | 0-50 | % |
 | Valve refresh interval | 15 | 5-60 | minutes |
 | PID calculation interval | 60 | 10-300 | seconds |
 | Min temperature | 5.0 | 0-15 | °C |
@@ -221,6 +226,20 @@ For example, with floor_value=25, off_threshold=1.0, and the room 0.3°C above t
 - **Too high** (e.g., 3°C): The valve stays open long after the room is warm enough. The room consistently overshoots by several degrees before the valve closes. Wasted energy.
 - **Start here**: 1.0°C. If the room still cycles uncomfortably (valve frequently goes 0% → floor → 0%), increase to 1.5°C. If the room gets too warm before the valve closes, decrease to 0.5°C.
 - **Tip**: In rooms with poor insulation (temperature drops quickly when heating stops), use a higher threshold (1.5-2.0°C) to keep the valve open longer.
+
+### Minimum Effective Valve Opening
+
+**What it does**: Positions between 0% and this value are never sent. Above target they become 0%; at or below target (heat was asked for) they are raised to this value. Boost and positions at or above it are unaffected.
+
+**Why**: A thermostat valve's opening percentage is not its flow. The pin has to travel some distance before water passes, so the bottom of the range is dead. Without this option, the floor decay above target walks the valve through that dead zone one percent at a time, moving the motor dozens of times a day for no heat. With it, the hydraulics are the same (no water flowed there anyway), but the valve moves once.
+
+**How to find the value**: With the other radiators shut, step one valve up (10%, 15%, 18%, 20%, 25%...) and hold each step for 20-30 minutes. The first step at which the radiator's inlet pipe gets warm, or a heat meter shows flow, is the opening point. Valves differ a little, so check each one if you can.
+
+**How to tune**:
+- Set it at or a little below the measured opening point, and at or below your floor value (otherwise the floor is effectively raised to it).
+- **Too high**: The valve closes earlier above target than the floor decay intends, and at or below target it may open further than the PID asked for.
+- **Too low**: Harmless, but some pointless moves in the dead zone remain.
+- **Tip**: The `min_opening_cut` attribute is `true` while the valve is held shut by this option.
 
 ### Valve Refresh Interval
 
@@ -375,11 +394,13 @@ The virtual thermostat exposes extra state attributes in Developer Tools → Sta
 - `pid_p`, `pid_i`, `pid_d`: Individual PID component values
 - `floor_active`: Whether the floor value is currently overriding the PID output
 - `boost_active`: Whether boost mode is currently engaged
+- `min_opening_cut`: Whether a request below the minimum effective opening was turned into 0%
 - `sensor_stale`: Whether the temperature source stopped reporting (failsafe engaged, valve writes paused)
 
 **Configuration (read-only mirrors of current settings):**
 - `kp`, `ki`, `kd`: Current PID gains
 - `floor_value`, `off_threshold`: Floor and off threshold settings
+- `min_valve_opening`: Minimum effective valve opening
 - `integral_max`: Anti-windup limit
 - `boost_threshold`, `boost_value`: Boost mode settings
 - `update_interval_min`: Valve refresh interval in minutes
