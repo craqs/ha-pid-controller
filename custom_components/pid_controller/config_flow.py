@@ -44,6 +44,7 @@ from .const import (
     CONF_SYNC_TARGET_TEMP,
     CONF_TEMPERATURE_ENTITY,
     CONF_UPDATE_INTERVAL,
+    CONF_VALVE_WRITE_DEADBAND,
     DEFAULT_BOOST_THRESHOLD,
     DEFAULT_BOOST_VALUE,
     DEFAULT_FLOOR_VALUE,
@@ -59,6 +60,7 @@ from .const import (
     DEFAULT_STALE_TIMEOUT,
     DEFAULT_SYNC_TARGET_TEMP,
     DEFAULT_UPDATE_INTERVAL,
+    DEFAULT_VALVE_WRITE_DEADBAND,
     DOMAIN,
 )
 
@@ -269,6 +271,16 @@ class PIDControllerOptionsFlow(OptionsFlow):
                 ): NumberSelector(
                     NumberSelectorConfig(
                         min=0, max=50, step=1, mode=NumberSelectorMode.SLIDER
+                    )
+                ),
+                vol.Optional(
+                    CONF_VALVE_WRITE_DEADBAND,
+                    default=options.get(
+                        CONF_VALVE_WRITE_DEADBAND, DEFAULT_VALVE_WRITE_DEADBAND
+                    ),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0, max=10, step=1, mode=NumberSelectorMode.BOX
                     )
                 ),
                 vol.Optional(

@@ -23,6 +23,22 @@ D_FILTER_TAU = 300.0
 MIN_OPENING_HYSTERESIS = 3
 
 
+def should_write(new: int, last: int | None, deadband: float) -> bool:
+    """Decide whether a newly computed valve position is worth sending.
+
+    Every write moves the valve motor (battery), and the PID mostly moves in
+    1% steps. Within the deadband the valve keeps its last position; closing
+    (0), fully opening (100) and leaving either end are always sent at once.
+    """
+    if last is None:
+        return True
+    if new == last:
+        return False
+    if deadband <= 0 or new in (0, 100) or last in (0, 100):
+        return True
+    return abs(new - last) >= deadband
+
+
 def _pct(value: float) -> int:
     """Round a non-negative valve percentage to int, half-up."""
     return int(value + 0.5)
