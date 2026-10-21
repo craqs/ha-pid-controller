@@ -16,6 +16,7 @@ _spec.loader.exec_module(_mod)
 PIDController = _mod.PIDController
 MAX_DT = _mod.MAX_DT
 BOOST_HYSTERESIS = _mod.BOOST_HYSTERESIS
+should_write = _mod.should_write
 
 
 def make_pid(**overrides):
@@ -531,6 +532,44 @@ class TestMinOpening:
         pid = make_pid(min_opening=17)
         tick(pid, 21.0, 23.0, time_offset=0.0)
         assert tick(pid, 21.0, 23.0) == 100
+
+
+# --- Valve write deadband ---
+
+
+class TestShouldWrite:
+    def test_first_write_always_sent(self):
+        assert should_write(37, None, 2) is True
+
+    def test_unchanged_never_sent(self):
+        assert should_write(37, 37, 0) is False
+
+    def test_disabled_sends_every_change(self):
+        assert should_write(38, 37, 0) is True
+
+    def test_small_change_held(self):
+        assert should_write(38, 37, 2) is False
+
+    def test_change_at_deadband_sent(self):
+        assert should_write(39, 37, 2) is True
+        assert should_write(35, 37, 2) is True
+
+    def test_close_and_full_open_always_sent(self):
+        assert should_write(0, 1, 2) is True
+        assert should_write(100, 99, 2) is True
+
+    def test_leaving_an_end_always_sent(self):
+        assert should_write(99, 100, 2) is True
+        assert should_write(1, 0, 2) is True
+
+    def test_slow_ramp_written_in_steps(self):
+        """A PID ramping 1% at a time is written every 2%, not every 1%."""
+        last, writes = 30, []
+        for new in range(31, 41):
+            if should_write(new, last, 2):
+                last = new
+                writes.append(new)
+        assert writes == [32, 34, 36, 38, 40]
 
 
 # --- Reset ---

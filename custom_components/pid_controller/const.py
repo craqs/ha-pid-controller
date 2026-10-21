@@ -40,3 +40,5 @@ CONF_STALE_TIMEOUT = "sensor_stale_timeout"
 DEFAULT_STALE_TIMEOUT = 60  # minutes without a temperature update before failsafe; 0 disables
 CONF_MIN_VALVE_OPENING = "min_valve_opening"
 DEFAULT_MIN_VALVE_OPENING = 0  # % below which the valve passes no water; 0 disables
+CONF_VALVE_WRITE_DEADBAND = "valve_write_deadband"
+DEFAULT_VALVE_WRITE_DEADBAND = 0  # % change needed before a new position is sent; 0 disables

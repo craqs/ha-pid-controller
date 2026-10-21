@@ -25,6 +25,10 @@ This integration creates virtual climate entities that:
 
 Most radiator valves pass no water at all in the bottom part of their range - a Bosch BTH-RA measured with a heat meter passed nothing below ~16% and only started flowing at 17-21%. Positions in that dead zone move the valve motor (battery) without heating anything. Set **Minimum effective valve opening** to where your valve starts to flow and the integration never sends such a position: above target a request below it becomes 0%, at or below target it is raised to the minimum. A closed valve reopens above target only once the request clears the minimum by 3%, so sensor noise at the cut-off doesn't toggle it. Disabled (0) by default.
 
+### Valve Write Deadband
+
+The PID mostly moves in 1% steps, and every step is a valve-motor move. On a cold day that can be 100-200 moves per valve. With **Valve write deadband** set (e.g. 2%), a new position is only sent once it differs from the current one by at least that much, which roughly halves the moves at 2% (a third at 3%). Closing to 0% and opening to 100% (boost) are always sent at once. Disabled (0) by default.
+
 ### Boost Mode
 
 When the room is significantly below the target temperature (by default 1.5°C or more), the valve is forced to 100% to warm up the room as quickly as possible. Once the temperature gets closer to the target, normal PID control takes over. Boost can be disabled by setting the threshold to 0.
@@ -132,6 +136,7 @@ On top of the standard PID, this integration adds **floor value logic** and an *
 | Floor value | 25 | 0-100 | % |
 | Off threshold | 1.0 | 0-5 | °C |
 | Minimum effective valve opening | 0 (off) | 0-50 | % |
+| Valve write deadband | 0 (off) | 0-10 | % |
 | Valve refresh interval | 15 | 5-60 | minutes |
 | PID calculation interval | 60 | 10-300 | seconds |
 | Min temperature | 5.0 | 0-15 | °C |
@@ -240,6 +245,17 @@ For example, with floor_value=25, off_threshold=1.0, and the room 0.3°C above t
 - **Too high**: The valve closes earlier above target than the floor decay intends, and at or below target it may open further than the PID asked for.
 - **Too low**: Harmless, but some pointless moves in the dead zone remain.
 - **Tip**: The `min_opening_cut` attribute is `true` while the valve is held shut by this option.
+
+### Valve Write Deadband
+
+**What it does**: A newly computed valve position is only sent when it differs from the last one sent by at least this many percent. Closing to 0% and opening to 100%, and leaving either, are always sent immediately.
+
+**Why**: Each write moves the valve motor. Near the setpoint the PID drifts by 1% at a time (a slow integral ramp, or 0.03°C of sensor noise times Kp), so most moves are tiny and add nothing you'd notice in the room. Holding them back saves battery and motor wear.
+
+**How to tune**:
+- **2%** roughly halves the moves while keeping fine control near the point where the valve starts to pass water. **3%** cuts them to about a third.
+- **Too high** (5%+): Near the opening point a few percent is a real change in flow, so the valve can sit noticeably away from what the PID wants and the room temperature wanders more before the next write.
+- **Tip**: `valve_position` is what the valve was told; `pid_output` is what the PID computed. They differ while a change is being held back.
 
 ### Valve Refresh Interval
 
@@ -390,7 +406,8 @@ Boost threshold: 0 (disabled)
 The virtual thermostat exposes extra state attributes in Developer Tools → States:
 
 **PID output:**
-- `valve_position`: Current valve opening percentage (0-100)
+- `valve_position`: Current valve opening percentage (0-100), as last commanded to the valve
+- `pid_output`: Position the PID computed this tick; differs from `valve_position` while the write deadband holds a small change back
 - `pid_p`, `pid_i`, `pid_d`: Individual PID component values
 - `floor_active`: Whether the floor value is currently overriding the PID output
 - `boost_active`: Whether boost mode is currently engaged
@@ -401,6 +418,7 @@ The virtual thermostat exposes extra state attributes in Developer Tools → Sta
 - `kp`, `ki`, `kd`: Current PID gains
 - `floor_value`, `off_threshold`: Floor and off threshold settings
 - `min_valve_opening`: Minimum effective valve opening
+- `valve_write_deadband`: Valve write deadband
 - `integral_max`: Anti-windup limit
 - `boost_threshold`, `boost_value`: Boost mode settings
 - `update_interval_min`: Valve refresh interval in minutes
