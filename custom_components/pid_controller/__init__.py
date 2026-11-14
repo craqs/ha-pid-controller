@@ -13,6 +13,7 @@ from .const import (
     CONF_KD,
     CONF_KI,
     CONF_KP,
+    CONF_MAX_VALVE_OPENING,
     CONF_MIN_VALVE_OPENING,
     CONF_OFF_THRESHOLD,
     DEFAULT_BOOST_THRESHOLD,
@@ -22,6 +23,7 @@ from .const import (
     DEFAULT_KD,
     DEFAULT_KI,
     DEFAULT_KP,
+    DEFAULT_MAX_VALVE_OPENING,
     DEFAULT_MIN_VALVE_OPENING,
     DEFAULT_OFF_THRESHOLD,
     DOMAIN,
@@ -46,6 +48,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         boost_value=entry.options.get(CONF_BOOST_VALUE, DEFAULT_BOOST_VALUE),
         min_opening=entry.options.get(
             CONF_MIN_VALVE_OPENING, DEFAULT_MIN_VALVE_OPENING
+        ),
+        max_opening=entry.options.get(
+            CONF_MAX_VALVE_OPENING, DEFAULT_MAX_VALVE_OPENING
         ),
     )
 

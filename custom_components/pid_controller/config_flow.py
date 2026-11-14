@@ -35,6 +35,7 @@ from .const import (
     CONF_KI,
     CONF_KP,
     CONF_MAX_TEMP,
+    CONF_MAX_VALVE_OPENING,
     CONF_MIN_TEMP,
     CONF_MIN_VALVE_OPENING,
     CONF_OFF_THRESHOLD,
@@ -53,6 +54,7 @@ from .const import (
     DEFAULT_KI,
     DEFAULT_KP,
     DEFAULT_MAX_TEMP,
+    DEFAULT_MAX_VALVE_OPENING,
     DEFAULT_MIN_TEMP,
     DEFAULT_MIN_VALVE_OPENING,
     DEFAULT_OFF_THRESHOLD,
@@ -271,6 +273,16 @@ class PIDControllerOptionsFlow(OptionsFlow):
                 ): NumberSelector(
                     NumberSelectorConfig(
                         min=0, max=50, step=1, mode=NumberSelectorMode.SLIDER
+                    )
+                ),
+                vol.Optional(
+                    CONF_MAX_VALVE_OPENING,
+                    default=options.get(
+                        CONF_MAX_VALVE_OPENING, DEFAULT_MAX_VALVE_OPENING
+                    ),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=20, max=100, step=1, mode=NumberSelectorMode.SLIDER
                     )
                 ),
                 vol.Optional(

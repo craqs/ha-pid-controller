@@ -25,6 +25,10 @@ This integration creates virtual climate entities that:
 
 Most radiator valves pass no water at all in the bottom part of their range - a Bosch BTH-RA measured with a heat meter passed nothing below ~16% and only started flowing at 17-21%. Positions in that dead zone move the valve motor (battery) without heating anything. Set **Minimum effective valve opening** to where your valve starts to flow and the integration never sends such a position: above target a request below it becomes 0%, at or below target it is raised to the minimum. A closed valve reopens above target only once the request clears the minimum by 3%, so sensor noise at the cut-off doesn't toggle it. Disabled (0) by default.
 
+### Maximum Effective Opening
+
+The other end of the same problem: many valves reach their full flow well before 100%. Measured with a heat meter, Bosch BTH-RA valves passed the same flow (and the radiators the same power) at 30-40% as at 100%. Set **Maximum effective valve opening** to that point and the output, boost included, is capped there, which saves the long motor runs up to 100% and back. The integral also stops accumulating once the cap is reached, so after a long warmup the valve closes as soon as the room reaches the target instead of first unwinding an integral that could never add heat. Disabled (100) by default.
+
 ### Valve Write Deadband
 
 The PID mostly moves in 1% steps, and every step is a valve-motor move. On a cold day that can be 100-200 moves per valve. With **Valve write deadband** set (e.g. 2%), a new position is only sent once it differs from the current one by at least that much, which roughly halves the moves at 2% (a third at 3%). Closing to 0% and opening to 100% (boost) are always sent at once. Disabled (0) by default.
@@ -87,7 +91,7 @@ Schedy (or manual control)
        │     computes valve % with floor logic
        │     writes to PI heating demand entity (only when changed)
        │
-       ├─ Every 15min: refreshes valve position
+       ├─ 10 min after the last write: refreshes valve position
        │     prevents built-in PID takeover
        │
        └─ On heating demand entity change: takeover detection
@@ -136,15 +140,16 @@ On top of the standard PID, this integration adds **floor value logic** and an *
 | Floor value | 25 | 0-100 | % |
 | Off threshold | 1.0 | 0-5 | °C |
 | Minimum effective valve opening | 0 (off) | 0-50 | % |
+| Maximum effective valve opening | 100 (off) | 20-100 | % |
 | Valve write deadband | 0 (off) | 0-10 | % |
-| Valve refresh interval | 15 | 5-60 | minutes |
+| Valve refresh interval | 10 | 5-60 | minutes |
 | PID calculation interval | 60 | 10-300 | seconds |
 | Min temperature | 5.0 | 0-15 | °C |
 | Max temperature | 30.0 | 15-40 | °C |
 | Integral anti-windup limit | 100.0 | 10-500 | - |
 | Boost threshold | 1.5 | 0-10 | °C |
 | Boost valve opening | 100 | 0-100 | % |
-| Sensor stale timeout | 60 | 0-360 | minutes |
+| Sensor stale timeout | 120 | 0-360 | minutes |
 | Sync target temperature | On | On/Off | - |
 
 ### Kp - Proportional Gain
@@ -259,12 +264,12 @@ For example, with floor_value=25, off_threshold=1.0, and the room 0.3°C above t
 
 ### Valve Refresh Interval
 
-**What it does**: Every N minutes, the integration re-sends the current valve position to the thermostat, even if the value hasn't changed. This is necessary because the Bosch BTH-RA (and similar thermostats) will revert to their built-in PID algorithm if they don't receive an external valve command within a timeout period.
+**What it does**: Once N minutes have passed since the last valve write, the integration re-sends the current valve position to the thermostat, even if the value hasn't changed. The check runs on the PID tick and counts from the last write of any kind, so a changed value is never followed by a redundant refresh. This is necessary because the Bosch BTH-RA (and similar thermostats) will revert to their built-in PID algorithm if they don't receive an external valve command within a timeout period.
 
 **How to tune**:
-- The BTH-RA typically requires a command every ~20 minutes. The default of 15 minutes provides a safety margin.
+- A BTH-RA (firmware 939726100) was measured to hold an external value for only ~15 minutes 10-30 seconds after the last write. The default of 10 minutes provides a safety margin; 15 loses the race about a third of the time.
 - Takeover is also detected event-driven: if the heating demand entity reports a value the integration didn't command, it re-asserts its position immediately (rate-limited to once a minute). The periodic refresh is the belt-and-suspenders backup.
-- **If you want to reduce Zigbee traffic**, increase to 18-20 minutes, but don't exceed 20 for BTH-RA.
+- **If you want to reduce Zigbee traffic**, increase it, but stay a few minutes under your thermostat's hold time (under ~13 for BTH-RA).
 - This is independent of the PID calculation interval - it's purely about keeping the thermostat in "external control" mode.
 
 ### PID Calculation Interval
@@ -330,7 +335,7 @@ These don't affect the PID algorithm itself - they only constrain the `set_tempe
 A warning is logged when the failsafe engages and an info message when the sensor recovers; the `sensor_stale` attribute on the virtual thermostat shows the current state. Control resumes automatically on the first fresh reading.
 
 **How to tune**:
-- **60 minutes (default)**: Safely above the reporting heartbeat of typical Zigbee temperature sensors (Xiaomi/Aqara report at least every ~50 minutes).
+- **120 minutes (default)**: Safely above the reporting heartbeat of typical Zigbee temperature sensors (Xiaomi/Aqara report at least every ~50-60 minutes). A report of an unchanged value counts as fresh, but a template or average sensor only updates when its value changes, so a steady room can go an hour without one.
 - **Decrease to 20-30 min**: If your sensor reports frequently and you want a faster failsafe.
 - **Set to 0**: Disables the failsafe (previous behavior - not recommended).
 - **Tip**: This works best with **Sync target temperature** enabled, so the built-in fallback regulates toward the right setpoint.
@@ -418,6 +423,7 @@ The virtual thermostat exposes extra state attributes in Developer Tools → Sta
 - `kp`, `ki`, `kd`: Current PID gains
 - `floor_value`, `off_threshold`: Floor and off threshold settings
 - `min_valve_opening`: Minimum effective valve opening
+- `max_valve_opening`: Maximum effective valve opening
 - `valve_write_deadband`: Valve write deadband
 - `integral_max`: Anti-windup limit
 - `boost_threshold`, `boost_value`: Boost mode settings
