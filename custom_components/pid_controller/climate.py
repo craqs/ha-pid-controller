@@ -20,6 +20,7 @@ from homeassistant.core import Event, HomeAssistant, State, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import (
     async_track_state_change_event,
+    async_track_state_report_event,
     async_track_time_interval,
 )
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -44,7 +45,7 @@ from .const import (
     DEFAULT_VALVE_WRITE_DEADBAND,
     DOMAIN,
 )
-from .pid import PIDController, should_write
+from .pid import PIDController, refresh_due, should_write
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -112,6 +113,9 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
         # Last value confirmed written to the demand entity; None forces the
         # next PID tick to write even if the computed value didn't change.
         self._last_sent_valve: int | None = None
+        # When the valve position was last written (monotonic). The periodic
+        # refresh counts from here, so any write resets it.
+        self._last_write_time: float | None = None
         self._last_temp_update: float | None = None
         self._sensor_stale_logged = False
         self._last_enforce: float = 0.0
@@ -145,6 +149,16 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             )
         )
 
+        # A report of an unchanged value fires no state change, so a steady
+        # room would look like a dead sensor. Count those reports as fresh.
+        self._unsub_listeners.append(
+            async_track_state_report_event(
+                self.hass,
+                [self._temperature_entity],
+                self._async_temperature_changed,
+            )
+        )
+
         # Listen to real thermostat for availability
         self._unsub_listeners.append(
             async_track_state_change_event(
@@ -165,7 +179,8 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
                 )
             )
 
-        # PID sample interval
+        # PID sample interval. The tick also re-sends an unchanged valve
+        # position once the refresh interval has passed since the last write.
         sample_interval = self._entry.options.get(
             CONF_PID_SAMPLE_INTERVAL, DEFAULT_PID_SAMPLE_INTERVAL
         )
@@ -174,18 +189,6 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
                 self.hass,
                 self._async_pid_tick,
                 timedelta(seconds=sample_interval),
-            )
-        )
-
-        # Valve refresh interval (to override built-in PID)
-        update_interval = self._entry.options.get(
-            CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
-        )
-        self._unsub_listeners.append(
-            async_track_time_interval(
-                self.hass,
-                self._async_refresh_valve,
-                timedelta(minutes=update_interval),
             )
         )
 
@@ -332,20 +335,30 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
         """Periodic PID recalculation."""
         await self._async_recalculate_and_send()
 
-    async def _async_refresh_valve(self, _now=None) -> None:
-        """Re-send current valve position to prevent built-in PID takeover."""
+    def _refresh_due(self) -> bool:
+        """Return True when an unchanged valve position should be re-sent.
+
+        The thermostat keeps an external valve position only for a while
+        after the last write, then its built-in controller takes over. The
+        interval counts from the last write of any kind, so a changed value
+        is never followed by a redundant refresh of the old one.
+        """
         # When off, the real thermostat is also off; don't keep poking it.
-        if self._attr_hvac_mode == HVACMode.OFF:
-            return
-        async with self._lock:
-            if self._sensor_is_stale():
-                self._mark_sensor_stale()
-                return
-            # No reading yet (e.g. right after startup): don't assert a valve
-            # position that wasn't computed from a real temperature.
-            if self._attr_current_temperature is None:
-                return
-            await self._async_send_valve_position(self._valve_position)
+        if self._attr_hvac_mode == HVACMode.OFF or self._last_write_time is None:
+            return False
+        update_interval = self._entry.options.get(
+            CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
+        )
+        sample_interval = self._entry.options.get(
+            CONF_PID_SAMPLE_INTERVAL, DEFAULT_PID_SAMPLE_INTERVAL
+        )
+        # Half a tick of slack so timer jitter can't push the refresh a
+        # whole tick late.
+        return refresh_due(
+            time.monotonic() - self._last_write_time,
+            update_interval * 60,
+            sample_interval,
+        )
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set target temperature (called by Schedy)."""
@@ -477,10 +490,10 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
                 self._valve_position = valve
             self._update_hvac_action()
             self.async_write_ha_state()
-            # Only write when the value changed; the periodic refresh keeps
-            # the thermostat in external-control mode. Saves Zigbee traffic
-            # and TRV battery.
-            if self._valve_position != self._last_sent_valve:
+            # Only write when the value changed, or to refresh an unchanged
+            # one so the thermostat stays in external-control mode. Saves
+            # Zigbee traffic and TRV battery.
+            if self._valve_position != self._last_sent_valve or self._refresh_due():
                 await self._async_send_valve_position(self._valve_position)
 
     def _update_hvac_action(self) -> None:
@@ -516,6 +529,7 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
                 blocking=True,
             )
             self._last_sent_valve = valve
+            self._last_write_time = time.monotonic()
         except Exception:
             self._last_sent_valve = None
             _LOGGER.exception(
@@ -540,6 +554,7 @@ class PIDVirtualThermostat(ClimateEntity, RestoreEntity):
             "floor_value": self._pid.floor_value,
             "min_valve_opening": self._pid.min_opening,
             "min_opening_cut": self._pid.last_min_opening_cut,
+            "max_valve_opening": self._pid.max_opening,
             "valve_write_deadband": self._entry.options.get(
                 CONF_VALVE_WRITE_DEADBAND, DEFAULT_VALVE_WRITE_DEADBAND
             ),

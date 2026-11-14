@@ -17,6 +17,7 @@ PIDController = _mod.PIDController
 MAX_DT = _mod.MAX_DT
 BOOST_HYSTERESIS = _mod.BOOST_HYSTERESIS
 should_write = _mod.should_write
+refresh_due = _mod.refresh_due
 
 
 def make_pid(**overrides):
@@ -647,3 +648,63 @@ class TestScenarios:
         # Schedy turns back on
         result = tick(pid, 22.0, 23.0, is_heating=True)
         assert result > 0
+
+
+class TestMaxOpening:
+    """Cap at the opening where the valve already passes its full flow."""
+
+    def test_output_capped(self):
+        pid = make_pid(kp=35.0, ki=0, kd=0, max_opening=40, boost_threshold=0)
+        assert tick(pid, 21.0, 23.0) == 40  # P alone would be 70
+
+    def test_boost_capped(self):
+        pid = make_pid(max_opening=40)
+        assert tick(pid, 20.0, 23.0) == 40
+        assert pid.last_boost_active is True
+
+    def test_below_cap_unchanged(self):
+        capped = make_pid(kp=35.0, ki=0, kd=0, max_opening=40, boost_threshold=0)
+        plain = make_pid(kp=35.0, ki=0, kd=0, boost_threshold=0)
+        assert tick(capped, 22.2, 23.0) == tick(plain, 22.2, 23.0) == 28
+
+    def test_integral_frozen_at_cap(self):
+        """No windup while the capped valve is already giving all it can."""
+        pid = make_pid(kp=35.0, ki=0.01, kd=0, max_opening=40, boost_threshold=0)
+        for _ in range(120):
+            tick(pid, 21.8, 23.0)  # P = 42, above the cap
+        assert pid.last_i == 0.0
+        plain = make_pid(kp=35.0, ki=0.01, kd=0, boost_threshold=0)
+        for _ in range(120):
+            tick(plain, 21.8, 23.0)
+        assert plain.last_i > 40
+
+    def test_closes_promptly_after_long_shortfall(self):
+        pid = make_pid(
+            kp=35.0, ki=0.006, kd=0, floor_value=20, min_opening=16,
+            max_opening=40, boost_threshold=0,
+        )
+        for _ in range(240):
+            tick(pid, 22.0, 23.0)
+        assert tick(pid, 22.0, 23.0) == 40
+        assert tick(pid, 23.4, 23.0) == 0
+
+    def test_disabled_by_default_and_out_of_range(self):
+        assert make_pid().max_opening == 100
+        assert make_pid(max_opening=0).max_opening == 100
+        assert make_pid(max_opening=100).max_opening == 100
+
+    def test_never_below_min_opening(self):
+        pid = make_pid(min_opening=20, max_opening=15, kp=15.0, ki=0, kd=0)
+        assert pid.max_opening == 20
+        assert tick(pid, 22.5, 23.0) == 20
+
+
+class TestRefreshDue:
+    def test_not_due_before_interval(self):
+        assert refresh_due(480, 600, 60) is False
+
+    def test_due_at_interval_despite_jitter(self):
+        assert refresh_due(599.9, 600, 60) is True
+
+    def test_due_after_interval(self):
+        assert refresh_due(660, 600, 60) is True

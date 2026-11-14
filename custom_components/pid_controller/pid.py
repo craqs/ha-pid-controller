@@ -39,6 +39,15 @@ def should_write(new: int, last: int | None, deadband: float) -> bool:
     return abs(new - last) >= deadband
 
 
+def refresh_due(since_last_write: float, interval: float, tick: float) -> bool:
+    """Decide whether an unchanged valve position should be re-sent.
+
+    The check runs once per PID tick, so half a tick of slack keeps timer
+    jitter from pushing the refresh a whole tick past the interval.
+    """
+    return since_last_write >= interval - tick / 2
+
+
 def _pct(value: float) -> int:
     """Round a non-negative valve percentage to int, half-up."""
     return int(value + 0.5)
@@ -58,6 +67,7 @@ class PIDController:
         boost_threshold: float,
         boost_value: int,
         min_opening: int = 0,
+        max_opening: int = 100,
     ) -> None:
         """Initialize PID controller."""
         self.kp = kp
@@ -69,6 +79,11 @@ class PIDController:
         self.boost_threshold = boost_threshold
         self.boost_value = boost_value
         self.min_opening = min_opening
+        # Opening at which the valve already passes its full flow. Never
+        # below min_opening; 100 (or anything out of range) disables the cap.
+        self.max_opening = (
+            max(max_opening, min_opening) if 0 < max_opening < 100 else 100
+        )
 
         self._integral: float = 0.0
         self._last_temp: float | None = None
@@ -110,7 +125,12 @@ class PIDController:
         Returns:
             Valve position as integer 0-100.
         """
-        output = self._compute(current_temp, target_temp, is_heating)
+        # Past max_opening the valve passes no more water, so anything above
+        # it would only move the motor.
+        output = min(
+            self._compute(current_temp, target_temp, is_heating),
+            _pct(self.max_opening),
+        )
         self.last_min_opening_cut = False
         if output > 0 and self.min_opening > 0 and target_temp is not None:
             output = self._apply_min_opening(output, current_temp <= target_temp)
@@ -201,11 +221,12 @@ class PIDController:
             return _pct(self.boost_value)
 
         # Conditional integration: don't accumulate while the output is
-        # already saturated in the direction of the error, otherwise the
+        # already saturated in the direction of the error (the top of the
+        # range is max_opening: more opening gives no more heat), otherwise the
         # integral winds up during long warmups and forces an overshoot.
         if dt is not None:
             provisional = self.last_p + self._integral + self.last_d
-            saturated = (provisional >= 100.0 and error > 0) or (
+            saturated = (provisional >= self.max_opening and error > 0) or (
                 provisional <= 0.0 and error < 0
             )
             if not saturated:
@@ -219,7 +240,7 @@ class PIDController:
         self._last_time = now
 
         raw_output = self.last_p + self.last_i + self.last_d
-        raw_output = max(0.0, min(100.0, raw_output))
+        raw_output = max(0.0, min(float(self.max_opening), raw_output))
 
         # Floor logic: keep valve at minimum opening, decaying linearly
         # above target until off_threshold is reached. (We only get here
